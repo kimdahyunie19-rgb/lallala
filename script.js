@@ -58,7 +58,7 @@ window.onload = () => {
 function checkLogin() {
     const email = $('log-email').value.trim();
     const pass  = $('log-pass').value;
-    if (email==="tlgpwhse3@gmail.com" && pass==="canon") {
+    if (email==="admin" && pass==="admin") {
         $('login-overlay').style.display='none';
         sessionStorage.setItem('j_auth','true');
     } else {
@@ -575,7 +575,7 @@ function un(){
 
 // ── MASTER RESET ───────────────────────────────
 function mr(){
-    if(prompt("Master Password:")==="canon"){
+    if(prompt("Master Password:")==="admin"){
         rdb.ref().remove();localStorage.clear();sessionStorage.clear();location.reload();
     }
 }
