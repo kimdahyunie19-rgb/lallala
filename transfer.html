@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TLGP WMS — Transfer In</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+    <style>
+    /* ── PRINT STYLES ── */
+    @media print {
+        body > * { display: none !important; }
+        #transfer-print-area { display: block !important; }
+        .print-close-transfer { display: none !important; }
+    }
+    #transfer-print-area { display:none; position:fixed; inset:0; z-index:99999; background:#fff; overflow:auto; }
+
+    /* TAG PRINT — A4 landscape, 1 per page, matching Excel PLC-TPC-019 */
+    .tag-print-sheet { display:none; } /* unused now */
+    .tag-page { width:284.3mm; height:197.3mm; margin:0 auto; background:#fff; font-family:Arial,sans-serif; color:#000; box-sizing:border-box; padding:0; page-break-after:always; display:flex; flex-direction:column; overflow:hidden; }
+    .tag-page:last-child { page-break-after:avoid; }
+    .tag-company { font-size:14pt;font-weight:bold;padding:2mm 3mm;border-left:2.5px solid #000;border-top:2.5px solid #000;border-right:2.5px solid #000;line-height:1.2;flex-shrink:0; }
+    .tag-title-row { font-size:20pt;font-weight:bold;text-align:center;border-left:2.5px solid #000;border-right:2.5px solid #000;padding:2mm 3mm;letter-spacing:2px;flex-shrink:0; }
+    .tag-field { display:flex;border-left:2.5px solid #000;border-right:2.5px solid #000;flex:1;min-height:0; }
+    .tag-field + .tag-field, .tag-title-row + .tag-field { border-top:1px solid #ccc; }
+    .tag-field-label { font-size:14pt;font-weight:bold;padding:2mm 3mm;display:flex;align-items:center;width:42mm;flex-shrink:0;line-height:1.2; }
+    .tag-field-value { font-size:80pt;display:flex;align-items:center;justify-content:center;flex:1;text-align:center;overflow:hidden;line-height:1;word-break:break-all; }
+    .tag-field-value.bold { font-weight:bold; }
+    .tag-footer { border:2.5px solid #000;border-top:1px solid #ccc;padding:1mm 3mm;display:flex;justify-content:flex-end;flex-shrink:0; }
+    .tag-doc-ref { font-size:11pt;font-weight:bold; }
+
+    /* SLIP PRINT — A4 portrait, compressed to fit */
+    @page { size: A4 portrait; margin: 8mm 10mm; }
+    .slip-print-page { width:190mm; min-height:0; margin:0 auto; background:#fff; font-family:Arial,sans-serif; font-size:8pt; color:#000; }
+    .slip-print-title { text-align:center;font-size:16pt;font-weight:900;letter-spacing:3px;margin-bottom:2mm;border-bottom:2px solid #222;padding-bottom:1.5mm; }
+    .slip-print-meta { display:flex;justify-content:space-between;margin-bottom:2mm; }
+    .slip-print-meta-left p { margin:0 0 1mm;font-size:8pt;font-weight:600; }
+    .slip-ctrl-label { font-size:7pt;color:#555;margin-bottom:1px; }
+    .ctrl-no { font-size:11pt;font-weight:900;font-family:'Courier New',monospace;border:2px solid #111;padding:2px 7px;display:inline-block; }
+    .slip-print-table { width:100%;border-collapse:collapse;margin-top:2mm; }
+    .slip-print-table th { background:#d0d0d0;border:1.5px solid #444;padding:2px 3px;font-size:6.5pt;font-weight:700;text-align:center; }
+    .slip-print-table td { border:1px solid #bbb;padding:2px 3px;font-size:7.5pt;text-align:center; }
+    .slip-print-table td.l { text-align:left; }
+    .slip-print-table td.r { text-align:right; }
+    .slip-print-table tr.total-row td { font-weight:900;background:#e8e8e8;border-top:2px solid #333; }
+    .slip-print-table tr.data-row:nth-child(even) td { background:#f8f8f8; }
+    .slip-print-note { font-size:7pt;color:#555;margin-top:1.5mm;font-style:italic; }
+    .slip-print-sigs { display:flex;justify-content:space-between;margin-top:6mm;gap:6mm; }
+    .slip-print-sig { flex:1;text-align:center;border-top:1.5px solid #333;padding-top:3px;font-size:8pt;font-weight:700; }
+    .slip-print-footer { text-align:right;margin-top:3mm;font-size:7pt;color:#888;font-style:italic; }
+    .print-close-transfer { position:fixed;top:12px;right:16px;z-index:999999;background:#dc2626;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer; }
+
+    /* ── BULK IMPORT SIDEBAR PANEL ── */
+    .bulk-panel { margin:8px 10px 4px; background:#eff6ff; border:1.5px solid #bfdbfe; border-radius:8px; padding:10px; }
+    .bulk-panel-title { font-size:9px;font-weight:800;color:#1d4ed8;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:5px; }
+    .bulk-col-hint { font-size:8.5px;color:#475569;background:#dbeafe;border-radius:4px;padding:5px 7px;margin-bottom:7px;line-height:1.6; }
+    .bulk-col-hint b { color:#1d4ed8; }
+    .bulk-xl-area { width:100%;height:88px;background:#fff;border:1.5px solid #93c5fd;border-radius:5px;color:#1e293b;font-family:'JetBrains Mono','Courier New',monospace;font-size:10px;padding:7px 8px;resize:vertical;outline:none;transition:0.15s;line-height:1.4; }
+    .bulk-xl-area:focus { border-color:#2563eb; }
+    .bulk-xl-area::placeholder { color:#94a3b8;font-size:9px; }
+    .btn-bulk-process { width:100%;margin-top:7px;padding:9px;background:linear-gradient(135deg,#2563eb,#1d4ed8);border:none;border-radius:6px;color:#fff;font-size:11px;font-weight:800;cursor:pointer;font-family:inherit;letter-spacing:0.04em;transition:0.15s; }
+    .btn-bulk-process:hover { opacity:0.9;box-shadow:0 3px 12px rgba(37,99,235,0.3); }
+    .bulk-result { margin-top:6px;font-size:10px;font-weight:600;padding:5px 8px;border-radius:4px;display:none; }
+    .bulk-result.ok  { background:#d1fae5;color:#059669; }
+    .bulk-result.err { background:#fee2e2;color:#dc2626; }
+    </style>
+</head>
+<body>
+
+<div id="transfer-print-area"></div>
+<button class="print-close-transfer" id="print-close-transfer" style="display:none;" onclick="closePrintSlip()">✕ CLOSE PRINT</button>
+
+<!-- LOGIN -->
+<div id="login-overlay">
+    <div class="login-card">
+        <div class="login-top"><span class="icon">📦</span><h1>TLGP WMS</h1><p>WAREHOUSE MANAGEMENT SYSTEM</p></div>
+        <div class="login-body">
+            <div class="lf"><label>Email Address</label><input type="email" id="log-email" placeholder="user@company.com" autocomplete="off"></div>
+            <div class="lf"><label>Password</label><input type="password" id="log-pass" placeholder="••••••••"></div>
+            <p id="log-err">⚠ Invalid credentials. Please try again.</p>
+            <button class="login-btn" onclick="checkLogin()">LOGIN TO SYSTEM</button>
+        </div>
+        <div class="login-foot">AUTHORIZED PERSONNEL ONLY</div>
+    </div>
+</div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar" style="width:240px; overflow-y:auto;">
+    <div class="sidebar-header">
+        <div class="sidebar-icon">📦</div>
+        <div><span class="brand">TLGP WMS</span><span class="ver">PRO v2.0</span></div>
+    </div>
+    <div class="sb-sec">
+        <span class="sb-lbl">NAVIGATION</span>
+        <a class="nav-btn" href="index.html">📦 &nbsp;INVENTORY LIST</a>
+        <a class="nav-btn active" href="transfer.html">🚚 &nbsp;TRANSFER IN</a>
+        <a class="nav-btn" href="pullout.html">📤 &nbsp;PULL-OUT SLIP</a>
+        <a class="nav-btn" href="storingtag.html">🏷 &nbsp;STORING TAG</a>
+        <a class="nav-btn" href="history.html">📜 &nbsp;SYSTEM LOGS</a>
+    </div>
+
+    <!-- ══ BULK IMPORT PANEL — always visible ══ -->
+    <div class="bulk-panel">
+        <div class="bulk-panel-title">📋 EXCEL BULK IMPORT</div>
+        <div class="bulk-col-hint">
+            Paste tab-separated rows from Excel:<br>
+            <b>Loc · Code · Lot · Status · Qty · Pallet · DR · Date · Type</b>
+        </div>
+        <textarea id="xl" class="bulk-xl-area" placeholder="TRA0101&#9;ITEM001&#9;LOT001&#9;PASSED&#9;500&#9;&#9;DR001&#9;2025-01-01&#9;RESIN&#10;TRA0102&#9;ITEM002&#9;LOT002&#9;PASSED&#9;300"></textarea>
+        <button class="btn-bulk-process" onclick="impBulk()">⚡ PROCESS IMPORT</button>
+        <div id="bulk-result" class="bulk-result"></div>
+    </div>
+
+    <div class="sb-bot">
+        <button class="btn-danger" onclick="mr()">⚠ MASTER RESET</button>
+    </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+<div class="page-content">
+
+    <!-- ══ TRANSFER SLIP HEADER ══ -->
+    <div class="ts-slip-card">
+        <div class="ts-slip-banner">
+            <div class="ts-banner-left">
+                <div class="ts-company">Toshiba Logistics Phils. Corp.</div>
+                <div class="ts-slip-big-title">TRANSFER SLIP</div>
+            </div>
+            <div class="ts-banner-right">
+                <div class="ts-ctrl-lbl">TS CONTROL NO.</div>
+                <input type="text" id="slip-tsno" class="ts-ctrl-no-input" placeholder="TL-YYYYMMDD-XX">
+            </div>
+        </div>
+        <div class="ts-slip-fields">
+            <div class="ts-field-group"><span class="ts-field-lbl">FROM</span><span class="ts-field-static">TPC</span></div>
+            <div class="ts-field-group"><span class="ts-field-lbl">TO</span><span class="ts-field-static">TLGP</span></div>
+            <div class="ts-field-group"><span class="ts-field-lbl">DATE</span><input type="date" id="slip-date" class="ts-field-inp"></div>
+            <div class="ts-field-group"><span class="ts-field-lbl">DR / INVOICE</span><input type="text" id="slip-dr" class="ts-field-inp" placeholder="DR or Invoice No."></div>
+            <div class="ts-field-group">
+                <span class="ts-field-lbl">DEFAULT TYPE</span>
+                <select id="slip-typ" class="ts-field-inp" onchange="applySlipType()">
+                    <option value="">— Select —</option>
+                    <option value="RESIN">RESIN</option><option value="FILM">FILM</option>
+                    <option value="MOLDED PARTS">MOLDED PARTS</option><option value="UN-STERILE">UN-STERILE</option>
+                    <option value="PACKAGING">PACKAGING</option>
+                </select>
+            </div>
+            <div class="ts-field-group">
+                <span class="ts-field-lbl">DEFAULT STATUS</span>
+                <select id="slip-sts" class="ts-field-inp">
+                    <option value="PASSED">PASSED</option><option value="HOLD">HOLD</option>
+                    <option value="UNDER QA">UNDER QA</option><option value="FAILED">FAILED</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ TOOLBAR ══ -->
+    <div class="page-header" style="padding:8px 14px;gap:8px;">
+        <div class="ph-left">
+            <h2>🚚 TRANSFER IN GRID</h2>
+            <span class="log-summary-badge" id="row-count-badge">0 rows</span>
+        </div>
+        <div class="ph-right" style="flex-wrap:wrap;gap:5px;">
+            <button class="btn-xls-action" onclick="addRows(1)">+ 1 ROW</button>
+            <button class="btn-xls-action" onclick="addRows(5)">+ 5 ROWS</button>
+            <button class="btn-xls-action" onclick="addRows(10)">+ 10 ROWS</button>
+            <button class="btn-xls-action" onclick="deleteEmptyRows()">🗑 DEL EMPTY</button>
+            <button class="btn-xls-action" onclick="deleteSelectedRows()">🗑 DEL ROWS</button>
+            <button class="btn-xls-action" onclick="showColManager()">⚙ COLUMNS</button>
+            <button class="btn-xls-action" onclick="saveGridState()">💾 SAVE DRAFT</button>
+            <button class="btn-xls-action" onclick="clearGrid()">✕ CLEAR</button>
+            <button class="btn-print-slip" onclick="printSlip()">🖨 PRINT SLIP</button>
+            <button class="btn-print-slip" style="background:#d1fae5;border-color:#6ee7b7;color:#059669;" onclick="printAllStoringTags()">🏷 PRINT ALL TAGS</button>
+            <button class="btn-xls-commit" onclick="commitTransfer()">⚡ COMMIT TO INVENTORY</button>
+        </div>
+    </div>
+
+    <div class="xls-instructions">
+        💡 <b>Grid:</b> Paste from Excel (Ctrl+V) · Click row# to select · Tab/Enter/Arrows to navigate · ⚙ to manage columns. &nbsp;|&nbsp; <b>Quick Import:</b> Use the 📋 EXCEL BULK IMPORT panel on the left sidebar.
+    </div>
+
+    <div id="transfer-result" class="transfer-result" style="display:none;"></div>
+
+    <!-- Column Manager Modal -->
+    <div id="col-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeColManager()">
+        <div class="modal-box" style="max-width:420px;">
+            <div class="modal-header">
+                <span>⚙ MANAGE COLUMNS</span>
+                <button class="modal-close" onclick="closeColManager()">✕</button>
+            </div>
+            <div style="padding:14px 16px;display:flex;flex-direction:column;gap:6px;overflow-y:auto;max-height:400px;" id="col-toggle-list"></div>
+            <div style="padding:10px 16px;border-top:1px solid #e2e8f0;display:flex;gap:8px;justify-content:flex-end;">
+                <button class="btn-xls-commit" style="padding:7px 16px;font-size:11px;" onclick="applyColChanges()">✓ APPLY</button>
+                <button class="btn-xls-action" onclick="closeColManager()">CANCEL</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ EXCEL GRID ══ -->
+    <div class="xls-outer" id="xls-outer">
+        <div class="xls-col-headers" id="xls-col-headers"><div class="xls-corner">ALL</div></div>
+        <div class="xls-grid" id="xls-grid"></div>
+    </div>
+
+</div>
+</main>
+
+<div id="copy-toast" class="copy-toast">📋 Copied!</div>
+
+<script src="script.js"></script>
+<script>
+['log-email','log-pass'].forEach(id=>{
+    document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')checkLogin();});
+});
+document.getElementById('slip-date').value = new Date().toISOString().split('T')[0];
+
+/* ══════════════════════════════════════════
+   COLUMN DEFINITIONS
+══════════════════════════════════════════ */
+const ALL_COLS = [
+    { key:'loc',    label:'TLGP LOCATION',  w:'110px', type:'text',   upper:true,  ph:'TRA0101',    locked:true  },
+    { key:'cod',    label:'ITEM CODE',      w:'1fr',   type:'text',   upper:true,  ph:'ITEM CODE',  locked:true  },
+    { key:'srcloc', label:'SOURCE LOC.',    w:'95px',  type:'text',   upper:true,  ph:'RM-0-01',    locked:false },
+    { key:'lot',    label:'LOT #',          w:'110px', type:'text',   upper:false, ph:'LOT NO.',    locked:false },
+    { key:'sts',    label:'QUALITY STATUS', w:'115px', type:'select', opts:['PASSED','HOLD','UNDER QA','FAILED'], dflt:'PASSED', locked:false },
+    { key:'qty',    label:'QUANTITY',       w:'90px',  type:'text',   upper:false, ph:'0',          locked:true  },
+    { key:'noc',    label:'NO. OF CASES',   w:'85px',  type:'text',   upper:false, ph:'1',          locked:false },
+    { key:'exp',    label:'EXPIRY DATE',    w:'105px', type:'text',   upper:false, ph:'YYYY-MM-DD', locked:false },
+    { key:'pal',    label:'PALLET REF.',    w:'100px', type:'text',   upper:false, ph:'PAL-ID',     locked:false },
+    { key:'rem',    label:'REMARKS',        w:'120px', type:'text',   upper:false, ph:'Remarks',    locked:false },
+    { key:'dat',    label:'DATE',           w:'105px', type:'text',   upper:false, ph:'YYYY-MM-DD', locked:false },
+    { key:'typ',    label:'ITEM TYPE',      w:'120px', type:'select', opts:['','RESIN','FILM','MOLDED PARTS','UN-STERILE','PACKAGING'], dflt:'', locked:false },
+    { key:'dr',     label:'DR / INVOICE',   w:'120px', type:'text',   upper:false, ph:'DR / INV',   locked:false },
+];
+
+// Restore visible keys from session (if available)
+let visibleKeys = ['loc','cod','lot','sts','qty','noc','exp','pal','rem'];
+try { const sv=JSON.parse(sessionStorage.getItem('tlgp_vis_cols')||'null'); if(Array.isArray(sv)&&sv.length) visibleKeys=sv; } catch(e){}
+
+function getActiveCols(){ return ALL_COLS.filter(c=>visibleKeys.includes(c.key)); }
+function getColIdx(key){ return getActiveCols().findIndex(c=>c.key===key); }
+
+/* ── Column Manager ── */
+function showColManager(){
+    document.getElementById('col-toggle-list').innerHTML = ALL_COLS.map(c=>`
+        <label class="col-toggle-row">
+            <input type="checkbox" value="${c.key}" ${visibleKeys.includes(c.key)?'checked':''} ${c.locked?'disabled':''}>
+            <span style="flex:1;">${c.label}</span>
+            ${c.locked?'<span style="font-size:9px;color:#94a3b8;">REQUIRED</span>':''}
+        </label>`).join('');
+    document.getElementById('col-modal').style.display='flex';
+}
+function closeColManager(){ document.getElementById('col-modal').style.display='none'; }
+function applyColChanges(){
+    const locked = ALL_COLS.filter(c=>c.locked).map(c=>c.key);
+    const sel = new Set(locked);
+    document.querySelectorAll('#col-toggle-list input:checked').forEach(cb=>sel.add(cb.value));
+    const saved = ROWS.map(row=>{ const d={}; getActiveCols().forEach((c,ci)=>d[c.key]=getCellVal(row.ri,ci)); return d; });
+    visibleKeys = ALL_COLS.filter(c=>sel.has(c.key)).map(c=>c.key);
+    sessionStorage.setItem('tlgp_vis_cols', JSON.stringify(visibleKeys));
+    closeColManager(); rebuildGrid(saved);
+}
+function applySlipType(){
+    const typ=document.getElementById('slip-typ').value; if(!typ) return;
+    const ci=getColIdx('typ'); if(ci<0) return;
+    ROWS.forEach(row=>setCellVal(row.ri,ci,typ));
+}
+
+/* ══════════════════════════════════════════
+   GRID ENGINE
+══════════════════════════════════════════ */
+let ROWS=[], rowSeq=0;
+let sel={r1:-1,c1:-1,r2:-1,c2:-1};
+let selectedRows=new Set();
+let isDragging=false, dragAnchor=null;
+const grid = document.getElementById('xls-grid');
+const toast = document.getElementById('copy-toast');
+
+function showToast(msg){ toast.textContent=msg; toast.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>toast.classList.remove('show'),1800); }
+
+function setGridTemplate(){
+    const cols = getActiveCols().map(d=>d.w).join(' ');
+    grid.style.gridTemplateColumns = `36px ${cols}`;
+    const hdr = document.getElementById('xls-col-headers');
+    hdr.style.gridTemplateColumns = `36px ${cols}`;
+    hdr.innerHTML = `<div class="xls-corner" onclick="selectAllRows()" title="Select all">ALL</div>`;
+    getActiveCols().forEach((d,ci)=>{
+        const el=document.createElement('div'); el.dataset.col=ci; el.textContent=d.label; el.title=d.label;
+        el.addEventListener('click',()=>{ setSel(0,ci,ROWS.length-1,ci); if(ROWS[0]) focusCell(0,ci); });
+        hdr.appendChild(el);
+    });
+}
+
+function rebuildGrid(savedData){
+    grid.innerHTML=''; ROWS=[]; rowSeq=0; sel={r1:-1,c1:-1,r2:-1,c2:-1}; selectedRows.clear();
+    setGridTemplate();
+    const newKeys=getActiveCols().map(c=>c.key);
+    (savedData||[]).forEach(d=>createRow(newKeys.map(k=>d[k]||'')));
+    if(!ROWS.length) addRows(20);
+    updateBadge();
+}
+
+function createRow(data){
+    rowSeq++;
+    const ri=ROWS.length, activeCols=getActiveCols(), rd={id:`gr${rowSeq}`,ri};
+    const rnum=document.createElement('div');
+    rnum.className='xls-rnum'; rnum.textContent=rowSeq; rnum.dataset.ri=ri;
+    rnum.addEventListener('click',e=>toggleRowSel(ri,e.shiftKey));
+    activeCols.forEach((def,ci)=>{
+        const wrap=document.createElement('div');
+        wrap.className='xls-cell-wrap'; wrap.dataset.ri=ri; wrap.dataset.ci=ci;
+        let el;
+        if(def.type==='select'){
+            el=document.createElement('select'); el.className='xls-sel';
+            def.opts.forEach(o=>{ const op=document.createElement('option'); op.value=o; op.textContent=o||'—'; el.appendChild(op); });
+            const iv=data?.[ci]||def.dflt||'';
+            const m=def.opts.find(o=>o.toUpperCase()===(iv||'').toUpperCase());
+            el.value=m!==undefined?m:(def.dflt||'');
+        } else {
+            el=document.createElement('div'); el.className='xls-inp';
+            el.contentEditable='true'; el.spellcheck=false; el.dataset.ph=def.ph||'';
+            el.textContent=data?.[ci]!=null?String(data[ci]):'';
+            if(def.upper) el.addEventListener('input',()=>{ const p=scp(el); el.textContent=el.textContent.toUpperCase(); rcp(el,p); });
+        }
+        el.dataset.ri=ri; el.dataset.ci=ci;
+        el.addEventListener('mousedown',onMD); el.addEventListener('focus',onFoc); el.addEventListener('keydown',onKD);
+        wrap.appendChild(el); rd[`el_${ci}`]=el; rd[`wrap_${ci}`]=wrap;
+    });
+    rd.rnum=rnum; rd.cells=activeCols.map((_,ci)=>rd[`el_${ci}`]);
+    ROWS.push(rd); grid.appendChild(rnum);
+    activeCols.forEach((_,ci)=>grid.appendChild(rd[`wrap_${ci}`]));
+    updateBadge(); return rd;
+}
+
+function addRows(n=10,dataArr=null){ for(let i=0;i<n;i++) createRow(dataArr?.[i]||null); }
+function updateBadge(){
+    const f=ROWS.filter(r=>getCellVal(r.ri,0)||getCellVal(r.ri,1)).length;
+    document.getElementById('row-count-badge').textContent=`${f} / ${ROWS.length} rows`;
+}
+
+/* ── Row Selection ── */
+function toggleRowSel(ri,shiftKey){
+    if(shiftKey&&selectedRows.size>0){ const last=Math.max(...selectedRows); const mn=Math.min(last,ri),mx=Math.max(last,ri); for(let i=mn;i<=mx;i++) selectedRows.add(i); }
+    else { selectedRows.has(ri)?selectedRows.delete(ri):selectedRows.add(ri); }
+    applyRSH();
+}
+function selectAllRows(){ ROWS.forEach(r=>selectedRows.add(r.ri)); applyRSH(); }
+function clearRowSel(){ selectedRows.clear(); applyRSH(); }
+function applyRSH(){
+    ROWS.forEach(r=>{ const s=selectedRows.has(r.ri); r.rnum.classList.toggle('rnum-selected',s); getActiveCols().forEach((_,ci)=>{ const w=r[`wrap_${ci}`]; if(w) w.classList.toggle('row-selected',s); }); });
+}
+function deleteSelectedRows(){
+    if(!selectedRows.size){ showToast('⚠ Click row numbers to select rows'); return; }
+    const del=[...selectedRows].sort((a,b)=>b-a);
+    del.forEach(ri=>{ const r=ROWS[ri]; if(!r) return; r.rnum.remove(); getActiveCols().forEach((_,ci)=>{ const w=r[`wrap_${ci}`]; if(w) w.remove(); }); });
+    ROWS=ROWS.filter(r=>!selectedRows.has(r.ri));
+    ROWS.forEach((r,i)=>{ r.ri=i; r.rnum.textContent=i+1; r.rnum.dataset.ri=i; getActiveCols().forEach((_,ci)=>{ if(r[`el_${ci}`]) r[`el_${ci}`].dataset.ri=i; if(r[`wrap_${ci}`]) r[`wrap_${ci}`].dataset.ri=i; }); });
+    rowSeq=ROWS.length; selectedRows.clear(); sel={r1:-1,c1:-1,r2:-1,c2:-1};
+    if(!ROWS.length) addRows(5);
+    updateBadge(); showToast(`🗑 Deleted ${del.length} row(s)`);
+}
+
+/* ── Delete Empty Rows ── */
+function deleteEmptyRows(){
+    const locI=getColIdx('loc'), codI=getColIdx('cod');
+    const emptyRis=ROWS.filter(r=>{
+        const l=locI>=0?getCellVal(r.ri,locI):'';
+        const c=codI>=0?getCellVal(r.ri,codI):'';
+        return !l.trim()&&!c.trim();
+    }).map(r=>r.ri);
+    if(!emptyRis.length){ showToast('✅ No empty rows'); return; }
+    emptyRis.sort((a,b)=>b-a).forEach(ri=>{
+        const r=ROWS[ri]; if(!r) return;
+        r.rnum.remove(); getActiveCols().forEach((_,ci)=>{ const w=r[`wrap_${ci}`]; if(w) w.remove(); });
+    });
+    ROWS=ROWS.filter(r=>!emptyRis.includes(r.ri));
+    ROWS.forEach((r,i)=>{ r.ri=i; r.rnum.textContent=i+1; r.rnum.dataset.ri=i; getActiveCols().forEach((_,ci)=>{ if(r[`el_${ci}`]) r[`el_${ci}`].dataset.ri=i; if(r[`wrap_${ci}`]) r[`wrap_${ci}`].dataset.ri=i; }); });
+    rowSeq=ROWS.length; sel={r1:-1,c1:-1,r2:-1,c2:-1};
+    if(!ROWS.length) addRows(5);
+    updateBadge(); showToast(`🗑 Deleted ${emptyRis.length} empty row(s)`);
+}
+
+/* ── Cell Selection ── */
+function normSel(s){ return{r1:Math.min(s.r1,s.r2),c1:Math.min(s.c1,s.c2),r2:Math.max(s.r1,s.r2),c2:Math.max(s.c1,s.c2)}; }
+function setSel(r1,c1,r2,c2){ sel={r1,c1,r2,c2}; applySelH(); }
+function applySelH(){
+    document.querySelectorAll('.xls-cell-wrap.xls-sel').forEach(e=>e.classList.remove('xls-sel'));
+    const n=normSel(sel); if(n.r1<0) return;
+    for(let ri=n.r1;ri<=n.r2;ri++){ const r=ROWS[ri]; if(!r) continue; for(let ci=n.c1;ci<=n.c2;ci++){ const w=r[`wrap_${ci}`]; if(w) w.classList.add('xls-sel'); } }
+}
+function getCellVal(ri,ci){ const r=ROWS[ri]; if(!r) return''; const el=r[`el_${ci}`]; if(!el) return''; return el.tagName==='SELECT'?el.value:(el.textContent||'').trim(); }
+function setCellVal(ri,ci,val){ const r=ROWS[ri]; if(!r) return; const el=r[`el_${ci}`]; if(!el) return; const def=getActiveCols()[ci]; if(el.tagName==='SELECT'){ const m=(def?.opts||[]).find(o=>o.toUpperCase()===(val||'').toUpperCase()); if(m!==undefined) el.value=m; } else { el.textContent=def?.upper?(val||'').toUpperCase():(val||''); } updateBadge(); }
+function scp(el){ const s=window.getSelection(); if(!s.rangeCount) return 0; const r=s.getRangeAt(0),pre=r.cloneRange(); pre.selectNodeContents(el); pre.setEnd(r.endContainer,r.endOffset); return pre.toString().length; }
+function rcp(el,pos){ const r=document.createRange(),s=window.getSelection(); let n=0,f=false; function t(node){ if(node.nodeType===3){ const e=n+node.length; if(!f&&pos<=e){ r.setStart(node,pos-n); r.collapse(true); f=true; } n=e; } else for(const c of node.childNodes) t(c); } t(el); if(!f){ r.selectNodeContents(el); r.collapse(false); } s.removeAllRanges(); s.addRange(r); }
+function onMD(e){ const ri=parseInt(e.currentTarget.dataset.ri),ci=parseInt(e.currentTarget.dataset.ci); if(isNaN(ri)||isNaN(ci)) return; clearRowSel(); if(e.shiftKey&&sel.r1>=0){ sel.r2=ri; sel.c2=ci; applySelH(); e.preventDefault(); return; } isDragging=true; dragAnchor={ri,ci}; setSel(ri,ci,ri,ci); }
+document.addEventListener('mousemove',e=>{ if(!isDragging) return; const el=document.elementFromPoint(e.clientX,e.clientY); if(!el) return; const w=el.closest('.xls-cell-wrap,[data-ri][data-ci]'); if(!w) return; const ri=parseInt(w.dataset.ri),ci=parseInt(w.dataset.ci); if(isNaN(ri)||isNaN(ci)) return; sel.r1=dragAnchor.ri; sel.c1=dragAnchor.ci; sel.r2=ri; sel.c2=ci; applySelH(); });
+document.addEventListener('mouseup',()=>{ isDragging=false; });
+function onFoc(e){ const ri=parseInt(e.currentTarget.dataset.ri),ci=parseInt(e.currentTarget.dataset.ci); if(!isNaN(ri)&&!isNaN(ci)) setSel(ri,ci,ri,ci); }
+function onKD(e){
+    const ri=parseInt(e.currentTarget.dataset.ri),ci=parseInt(e.currentTarget.dataset.ci),COLC=getActiveCols().length;
+    if((e.ctrlKey||e.metaKey)&&e.key==='c'){ cpSel(); return; }
+    if((e.ctrlKey||e.metaKey)&&e.key==='a'&&!e.currentTarget.closest('.xls-inp')){ e.preventDefault(); setSel(0,0,ROWS.length-1,COLC-1); return; }
+    if((e.key==='Delete'||e.key==='Backspace')&&!e.currentTarget.closest('.xls-inp')){ clrSel(); return; }
+    if(e.key==='Tab'){ e.preventDefault(); const nc=e.shiftKey?ci-1:ci+1; if(nc>=0&&nc<COLC) focusCell(ri,nc); else if(!e.shiftKey&&ri<ROWS.length-1) focusCell(ri+1,0); return; }
+    if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); if(ri<ROWS.length-1) focusCell(ri+1,ci); else{ addRows(5); setTimeout(()=>focusCell(ri+1,ci),10); } return; }
+    const isEd=e.currentTarget.contentEditable==='true';
+    if(e.key.startsWith('Arrow')&&!isEd){ e.preventDefault(); let nr=ri,nc=ci; if(e.key==='ArrowDown') nr=Math.min(ri+1,ROWS.length-1); if(e.key==='ArrowUp') nr=Math.max(ri-1,0); if(e.key==='ArrowRight') nc=Math.min(ci+1,COLC-1); if(e.key==='ArrowLeft') nc=Math.max(ci-1,0); if(e.shiftKey){ sel.r2=nr; sel.c2=nc; applySelH(); } else { focusCell(nr,nc); } }
+}
+function focusCell(ri,ci){ const r=ROWS[ri]; if(!r) return; const el=r[`el_${ci}`]; if(!el) return; el.focus(); setSel(ri,ci,ri,ci); if(el.contentEditable==='true'){ const r2=document.createRange(),s=window.getSelection(); r2.selectNodeContents(el); r2.collapse(false); s.removeAllRanges(); s.addRange(r2); } }
+function cpSel(){ const n=normSel(sel); if(n.r1<0) return; let lines=[]; for(let ri=n.r1;ri<=n.r2;ri++){ let cols=[]; for(let ci=n.c1;ci<=n.c2;ci++) cols.push(getCellVal(ri,ci)); lines.push(cols.join('\t')); } const text=lines.join('\n'); navigator.clipboard.writeText(text).then(()=>showToast(`📋 Copied`)).catch(()=>{ const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showToast('📋 Copied'); }); }
+function clrSel(){ const n=normSel(sel); for(let ri=n.r1;ri<=n.r2;ri++) for(let ci=n.c1;ci<=n.c2;ci++) setCellVal(ri,ci,''); }
+
+/* ── Paste from Excel into grid ── */
+document.addEventListener('paste',e=>{
+    const a=document.activeElement;
+    if(a&&a.id==='xl') return; // don't intercept bulk textarea
+    if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA')&&!a.classList.contains('xls-inp')) return;
+    const clip=e.clipboardData||window.clipboardData, text=clip.getData('text'); if(!text) return;
+    e.preventDefault();
+    const lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').trim().split('\n').map(l=>l.split('\t').map(c=>c.trim()));
+    const n=normSel(sel), sR=n.r1>=0?n.r1:0, sC=n.c1>=0?n.c1:0;
+    lines.forEach((cols,ri)=>{ const tRi=sR+ri; while(ROWS.length<=tRi) addRows(5); cols.forEach((val,ci)=>{ const tCi=sC+ci; if(tCi<getActiveCols().length) setCellVal(tRi,tCi,val); }); });
+    setSel(sR,sC,sR+lines.length-1,Math.min(sC+(lines[0]?.length||1)-1,getActiveCols().length-1));
+    showToast(`📋 Pasted ${lines.length} row${lines.length>1?'s':''}`);
+});
+document.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='c'&&sel.r1>=0){ const a=document.activeElement; if(a&&a.closest('#xls-grid')) cpSel(); } });
+document.addEventListener('mousedown',e=>{ if(!e.target.closest('#xls-outer')&&!e.target.closest('#xls-col-headers')){ sel={r1:-1,c1:-1,r2:-1,c2:-1}; applySelH(); } });
+
+/* ── Save / Load Draft ── */
+function saveGridState(){
+    try{
+        const ac=getActiveCols();
+        const rows=ROWS.map(row=>{ const d={}; ac.forEach((c,ci)=>d[c.key]=getCellVal(row.ri,ci)); return d; });
+        sessionStorage.setItem('tlgp_grid_draft',JSON.stringify({ rows, visCols:visibleKeys, slipDate:document.getElementById('slip-date').value, slipTsno:document.getElementById('slip-tsno').value, slipDr:document.getElementById('slip-dr').value, slipTyp:document.getElementById('slip-typ').value, slipSts:document.getElementById('slip-sts').value }));
+        showToast('💾 Draft saved');
+    }catch(e){ showToast('⚠ Could not save draft'); }
+}
+function loadGridState(){
+    try{
+        const raw=sessionStorage.getItem('tlgp_grid_draft'); if(!raw) return null;
+        const d=JSON.parse(raw);
+        if(Array.isArray(d.visCols)&&d.visCols.length) visibleKeys=d.visCols;
+        const fm={slipDate:'slip-date',slipTsno:'slip-tsno',slipDr:'slip-dr',slipTyp:'slip-typ',slipSts:'slip-sts'};
+        Object.entries(fm).forEach(([k,id])=>{ const el=document.getElementById(id); if(el&&d[k]) el.value=d[k]; });
+        return Array.isArray(d.rows)&&d.rows.length?d.rows:null;
+    }catch(e){ return null; }
+}
+function clearGrid(){
+    if(!confirm('Clear all rows?')) return;
+    grid.innerHTML=''; ROWS=[]; rowSeq=0; sel={r1:-1,c1:-1,r2:-1,c2:-1}; selectedRows.clear();
+    setGridTemplate(); addRows(20); updateBadge(); sessionStorage.removeItem('tlgp_grid_draft');
+}
+
+/* ══════════════════════════════════════════
+   COMMIT TRANSFER GRID → FIREBASE INVENTORY
+══════════════════════════════════════════ */
+function commitTransfer(){
+    const slipTsno = document.getElementById('slip-tsno').value.trim();
+    const slipDr   = document.getElementById('slip-dr').value.trim();
+    const slipDat  = document.getElementById('slip-date').value;
+    const slipTyp  = document.getElementById('slip-typ').value;
+    const slipSts  = document.getElementById('slip-sts').value;
+    const drFinal  = slipTsno || slipDr || '';
+
+    // Build rows: [loc, cod, lot, sts, qty, pal, dr, dat, typ]
+    const importRows = [];
+    ROWS.forEach(row=>{
+        const locI = getColIdx('loc'), codI = getColIdx('cod');
+        const loc = locI>=0 ? getCellVal(row.ri, locI) : '';
+        const cod = codI>=0 ? getCellVal(row.ri, codI) : '';
+        if(!loc || !cod) return;
+        const g = key=>{ const i=getColIdx(key); return i>=0?getCellVal(row.ri,i):''; };
+        importRows.push([
+            loc, cod,
+            g('lot'),
+            g('sts') || slipSts || 'PASSED',
+            g('qty') || '0',
+            g('pal'),
+            g('dr') || drFinal,
+            g('dat') || slipDat,
+            g('typ') || slipTyp,
+        ]);
+    });
+
+    if(!importRows.length){ alert('❌ No valid rows. Fill at least TLGP LOCATION and ITEM CODE.'); return; }
+
+    const added = processGridImport(importRows);
+    if(added > 0){
+        document.getElementById('transfer-result').style.display='flex';
+        document.getElementById('transfer-result').innerHTML=`✅ Transferred <b>${added}</b> item${added!==1?'s':''} to inventory successfully! <a href="index.html" class="res-link">View Inventory →</a>`;
+        sessionStorage.removeItem('tlgp_grid_draft');
+        grid.innerHTML=''; ROWS=[]; rowSeq=0; sel={r1:-1,c1:-1,r2:-1,c2:-1}; selectedRows.clear();
+        setGridTemplate(); addRows(20); updateBadge();
+    }
+}
+
+/* ══════════════════════════════════════════
+   SIDEBAR BULK IMPORT
+   Format: Loc · Code · Lot · Status · Qty · Pallet · DR · Date · Type
+   (tab-separated, direct paste from Excel)
+══════════════════════════════════════════ */
+function impBulk(){
+    const raw = document.getElementById('xl').value.trim();
+    const res = document.getElementById('bulk-result');
+    res.style.display='none';
+
+    if(!raw){ res.className='bulk-result err'; res.textContent='⚠ Please paste data first.'; res.style.display='block'; return; }
+
+    const validSts = ['PASSED','HOLD','UNDER QA','FAILED'];
+    const lines = raw.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n').filter(l=>l.trim());
+    const importRows = []; let skipped=0;
+
+    lines.forEach((line,i)=>{
+        const c = line.split('\t').map(s=>(s||'').trim());
+        const loc = c[0].toUpperCase();
+        const cod = c[1].toUpperCase();
+        // Auto-skip header row
+        if(i===0 && (!loc || ['LOCATION','LOC','TLGP LOCATION','TLGP LOC'].includes(loc))){ skipped++; return; }
+        if(!loc || !cod){ skipped++; return; }
+        const stsRaw = (c[3]||'').toUpperCase();
+        const sts = validSts.find(s=>s.toUpperCase()===stsRaw) || 'PASSED';
+        importRows.push([loc, cod, c[2]||'', sts, c[4]||'0', c[5]||'', c[6]||'', c[7]||'', c[8]||'']);
+    });
+
+    if(!importRows.length){
+        res.className='bulk-result err';
+        res.textContent='❌ No valid rows found. Expected: Loc[TAB]Code[TAB]Lot[TAB]Status[TAB]Qty[TAB]Pallet[TAB]DR[TAB]Date[TAB]Type';
+        res.style.display='block'; return;
+    }
+
+    const added = processGridImport(importRows);
+    document.getElementById('xl').value='';
+    res.className='bulk-result ok';
+    res.textContent=`✅ ${added} item${added!==1?'s':''} imported to inventory!${skipped?` (${skipped} skipped)`:''}`;
+    res.style.display='block';
+    setTimeout(()=>res.style.display='none', 6000);
+}
+
+/* ── Print Slip ── */
+function printSlip(){
+    const rows=ROWS.map(row=>{ const d={}; getActiveCols().forEach((c,ci)=>d[c.key]=getCellVal(row.ri,ci)); return d; }).filter(r=>r.loc&&r.cod);
+    if(!rows.length){ alert('❌ No data to print.'); return; }
+    const tsno=document.getElementById('slip-tsno').value||'—';
+    const slipDate=document.getElementById('slip-date').value||'—';
+    const slipDr=document.getElementById('slip-dr').value||'';
+    const slipSts=document.getElementById('slip-sts').value;
+    let totalQty=0,totalCases=0;
+    rows.forEach(r=>{ totalQty+=parseFloat(r.qty)||0; totalCases+=parseFloat(r.noc)||0; });
+    const tbody=rows.map((r,i)=>`<tr class="data-row"><td>${i+1}</td><td class="l"><b>${r.cod}</b></td><td>${r.srcloc||'—'}</td><td>${r.lot||'—'}</td><td>${r.sts||slipSts}</td><td class="r" style="font-weight:600;">${(parseFloat(r.qty)||0).toLocaleString()}</td><td>${r.noc||''}</td><td>${r.exp||''}</td><td>${r.pal||''}</td><td>${r.rem||''}</td><td><b>${r.loc}</b></td></tr>`).join('');
+    document.getElementById('transfer-print-area').innerHTML=`<div class="slip-print-page"><div class="slip-print-title">TRANSFER SLIP</div><div class="slip-print-meta"><div class="slip-print-meta-left"><p>From : &nbsp;<b>TPC</b></p><p>To : &nbsp;&nbsp;&nbsp;<b>TLGP</b></p><p>Date : &nbsp;<b>${slipDate}</b></p>${slipDr?`<p>DR / Invoice : &nbsp;<b>${slipDr}</b></p>`:''}</div><div><div class="slip-ctrl-label">TS Control No:</div><div class="ctrl-no">${tsno}</div></div></div><table class="slip-print-table"><thead><tr><th style="width:22px">NO.</th><th style="width:120px">PRODUCT / ITEM CODE</th><th style="width:62px">SRC LOC</th><th style="width:75px">LOT #</th><th style="width:65px">STATUS</th><th style="width:58px">QTY</th><th style="width:42px">CASES</th><th style="width:62px">EXPIRY</th><th style="width:60px">PALLET</th><th style="width:70px">REMARKS</th><th style="width:72px">TLGP LOC</th></tr></thead><tbody>${tbody}<tr class="total-row"><td colspan="5" class="r" style="padding-right:6px;">TOTAL</td><td class="r">${totalQty.toLocaleString()}</td><td>${totalCases||''}</td><td colspan="4"></td></tr></tbody></table><p class="slip-print-note">NOTE: No. of Cases and Expiry date is applicable only for Finished Product.</p><div class="slip-print-sigs"><div class="slip-print-sig">PREPARED BY:</div><div class="slip-print-sig">CHECKED BY:</div><div class="slip-print-sig">STORED BY:</div></div><div class="slip-print-footer">PLC-TPC-031-R00 &nbsp;|&nbsp; Printed: ${new Date().toLocaleString('en-GB')}</div></div>`;
+    document.getElementById('transfer-print-area').style.display='block';
+    document.getElementById('print-close-transfer').style.display='block';
+    window.print();
+}
+function closePrintSlip(){
+    document.getElementById('transfer-print-area').style.display='none';
+    document.getElementById('print-close-transfer').style.display='none';
+}
+
+/* ── Print All Storing Tags ── */
+function printAllStoringTags(){
+    const rows=ROWS.map(row=>{ const d={}; getActiveCols().forEach((c,ci)=>d[c.key]=getCellVal(row.ri,ci)); return d; }).filter(r=>r.loc&&r.cod);
+    if(!rows.length){ alert('❌ No valid rows.'); return; }
+    const slipDate=document.getElementById('slip-date').value||new Date().toLocaleDateString('en-GB');
+
+    const pages=rows.map(r=>{
+        const cod=r.cod||'—',lot=r.lot||'—',loc=r.loc||'—';
+        const qty=(parseFloat(r.qty)||0).toLocaleString();
+        let dt=r.dat||slipDate||'—';
+        try{ if(dt&&dt.includes('-')){ const[y,m,d]=dt.split('-'); dt=m+'/'+d+'/'+y; } }catch(e){}
+        const csz=cod.length>12?Math.max(30,Math.floor(80*10/cod.length)):80;
+        const lsz=lot.length>12?Math.max(30,Math.floor(80*10/lot.length)):80;
+        const locsz=loc.length>9?60:80;
+        return `<div class="tag-page"><div class="tag-company">TOSHIBA LOGISTICS PHILIPPINES CORP.</div><div class="tag-title-row">PALLET IDENTIFICATION TAG</div><div class="tag-field"><div class="tag-field-label">PRODUCT/<br>ITEM CODE:</div><div class="tag-field-value" style="font-size:${csz}pt;">${cod}</div></div><div class="tag-field"><div class="tag-field-label">LOT<br>NUMBER:</div><div class="tag-field-value bold" style="font-size:${lsz}pt;">${lot}</div></div><div class="tag-field"><div class="tag-field-label">QUANTITY :</div><div class="tag-field-value">${qty}</div></div><div class="tag-field"><div class="tag-field-label">LOCATION:</div><div class="tag-field-value" style="font-size:${locsz}pt;">${loc}</div></div><div class="tag-field" style="border-bottom:2.5px solid #000;"><div class="tag-field-label">STORING<br>DATE:</div><div class="tag-field-value">${dt}</div></div><div class="tag-footer"><div class="tag-doc-ref">PLC-TPC-019.R00</div></div></div>`;
+    }).join('');
+
+    document.getElementById('transfer-print-area').innerHTML=pages;
+    document.getElementById('transfer-print-area').style.display='block';
+    document.getElementById('print-close-transfer').style.display='block';
+    window.print();
+}
+
+/* ── Auto-save on navigate ── */
+window.addEventListener('beforeunload', ()=>saveGridState());
+
+/* ══════════════════════════════════════════
+   INIT — load saved state FIRST, then build grid
+══════════════════════════════════════════ */
+(function init(){
+    const savedRows = loadGridState();  // restores visibleKeys + header fields
+    setGridTemplate();                   // build with correct columns
+    if(savedRows && savedRows.length){
+        const ac=getActiveCols();
+        savedRows.forEach(d=>createRow(ac.map(c=>d[c.key]!==undefined?String(d[c.key]):'')));
+        if(ROWS.length<3) addRows(3);
+        showToast('📂 Draft restored');
+    } else {
+        addRows(20);
+    }
+})();
+</script>
+</body>
+</html>

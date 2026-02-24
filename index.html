@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TLGP WMS — Inventory</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+</head>
+<body>
+
+<div id="print-area"></div>
+<button class="print-close-btn" id="print-close" style="display:none;" onclick="closePrint()">✕ CLOSE PRINT</button>
+
+<!-- LOGIN -->
+<div id="login-overlay">
+    <div class="login-card">
+        <div class="login-top">
+            <span class="icon">📦</span>
+            <h1>TLGP WMS</h1>
+            <p>WAREHOUSE MANAGEMENT SYSTEM</p>
+        </div>
+        <div class="login-body">
+            <div class="lf"><label>Email Address</label><input type="email" id="log-email" placeholder="user@company.com" autocomplete="off"></div>
+            <div class="lf"><label>Password</label><input type="password" id="log-pass" placeholder="••••••••"></div>
+            <p id="log-err">⚠ Invalid credentials. Please try again.</p>
+            <button class="login-btn" onclick="checkLogin()">LOGIN TO SYSTEM</button>
+        </div>
+        <div class="login-foot">AUTHORIZED PERSONNEL ONLY</div>
+    </div>
+</div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+    <div class="sidebar-header">
+        <div class="sidebar-icon">📦</div>
+        <div><span class="brand">TLGP WMS</span><span class="ver">PRO v2.0</span></div>
+    </div>
+    <div class="sb-sec">
+        <span class="sb-lbl">NAVIGATION</span>
+        <a class="nav-btn active" href="index.html">📦 &nbsp;INVENTORY LIST</a>
+        <a class="nav-btn" href="transfer.html">🚚 &nbsp;TRANSFER IN</a>
+        <a class="nav-btn" href="storingtag.html">🏷 &nbsp;STORING TAG</a>
+        <a class="nav-btn" href="history.html">📜 &nbsp;SYSTEM LOGS</a>
+        <a class="nav-btn" href="pullout.html">📤 &nbsp;PULL-OUT SLIP</a>
+    </div>
+    <div class="sb-bot">
+        <button class="btn-undo" onclick="un()">↩ UNDO LAST ACTION</button>
+        <button class="btn-danger" onclick="mr()">⚠ MASTER RESET</button>
+    </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+    <div class="page-content">
+
+        <div class="stats">
+            <div class="s-box total"><div class="s-icon">📊</div><div class="s-info"><span class="s-val" id="s-q">0</span><span class="s-lbl">TOTAL QTY</span></div></div>
+            <div class="s-box locs"><div class="s-icon">📍</div><div class="s-info"><span class="s-val" id="s-l">0</span><span class="s-lbl">OCCUPIED LOCS</span></div></div>
+            <div class="s-box passed"><div class="s-icon">✅</div><div class="s-info"><span class="s-val" id="s-p">0</span><span class="s-lbl">PASSED</span></div></div>
+            <div class="s-box hold"><div class="s-icon">⏸</div><div class="s-info"><span class="s-val" id="s-h">0</span><span class="s-lbl">ON HOLD</span></div></div>
+            <div class="s-box failed"><div class="s-icon">❌</div><div class="s-info"><span class="s-val" id="s-f">0</span><span class="s-lbl">FAILED</span></div></div>
+        </div>
+
+        <div class="filter-bar">
+            <div class="filter-item">
+                <label>VIEW MODE</label>
+                <select id="f-view" onchange="re()">
+                    <option value="all">SHOW ALL</option>
+                    <option value="occupied">OCCUPIED ONLY</option>
+                    <option value="empty">EMPTY ONLY</option>
+                </select>
+            </div>
+            <div class="filter-item">
+                <label class="toggle-label">
+                    <input type="checkbox" id="fifo-check" onchange="re()">
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                    <span>FIFO SORTING</span>
+                </label>
+            </div>
+            <div class="filter-item" id="drag-hint" style="display:none;">
+                <span class="drag-hint-text">🖱 Drag over locations to select · Ctrl+C to copy</span>
+            </div>
+        </div>
+
+        <section class="entry-card">
+            <div class="entry-header">
+                <span class="entry-title"><span class="entry-dot"></span>STOCK ENTRY FORM</span>
+                <button class="btn-clear" onclick="resetForm()">✕ CLEAR FORM</button>
+            </div>
+            <input type="hidden" id="e-idx" value="-1">
+            <div class="igrid">
+                <div class="fg"><label>Location</label><input list="loc-list" id="i-loc" placeholder="TRA0101" maxlength="7"><datalist id="loc-list"></datalist></div>
+                <div class="fg"><label>Item Code</label><input type="text" id="i-cod" placeholder="Item Code"></div>
+                <div class="fg"><label>Lot Number</label><input type="text" id="i-lot" placeholder="Lot No."></div>
+                <div class="fg"><label>Status</label>
+                    <select id="i-sts">
+                        <option value="PASSED">PASSED</option>
+                        <option value="HOLD">HOLD</option>
+                        <option value="UNDER QA">UNDER QA</option>
+                        <option value="FAILED">FAILED</option>
+                    </select>
+                </div>
+                <div class="fg"><label>Quantity</label><input type="number" id="i-qty" placeholder="0"></div>
+                <div class="fg"><label>Pallet ID</label><input type="text" id="i-pal" placeholder="Pallet ID"></div>
+                <div class="fg"><label>DR / Invoice</label><input type="text" id="i-dr" placeholder="DR / Inv No."></div>
+                <div class="fg"><label>Date</label><input type="date" id="i-dat"></div>
+                <div class="fg"><label>Item Type</label>
+                    <select id="i-typ" onchange="map()">
+                        <option value="">-- Type --</option>
+                        <option value="RESIN">RESIN</option>
+                        <option value="FILM">FILM</option>
+                        <option value="MOLDED PARTS">MOLDED PARTS</option>
+                        <option value="UN-STERILE">UN-STERILE</option>
+                        <option value="PACKAGING">PACKAGING</option>
+                    </select>
+                </div>
+                <div class="fg"><label>ACC #</label><input type="text" id="i-acc" placeholder="Auto" readonly></div>
+            </div>
+            <button class="btn-save" onclick="sv()">💾 SAVE ENTRY</button>
+        </section>
+
+        <!-- Inventory table -->
+        <div class="t-wrap" id="inv-wrap">
+            <table id="inv-table">
+                <thead>
+                    <tr class="thead-main">
+                        <th width="82">LOCATION</th><th width="150">ITEM CODE</th><th width="110">LOT NO.</th>
+                        <th width="80">QTY</th><th width="95">STATUS</th><th width="85">PALLET</th>
+                        <th width="110">DR/INV</th><th width="95">DATE</th><th width="110">TYPE</th>
+                        <th width="50">ACC</th><th width="185">ACTIONS</th>
+                    </tr>
+                    <tr class="thead-search">
+                        <th><input class="c-src" placeholder="🔍 Loc..." oninput="re()"></th>
+                        <th><input class="c-src" placeholder="🔍 Code..." oninput="re()"></th>
+                        <th><input class="c-src" placeholder="🔍 Lot..." oninput="re()"></th>
+                        <th><input class="c-src" placeholder="🔍 Qty..." oninput="re()"></th>
+                        <th><input class="c-src" placeholder="🔍 Sts..." oninput="re()"></th>
+                        <th><input class="c-src" placeholder="🔍 Pal..." oninput="re()"></th>
+                        <th><input class="c-src" placeholder="🔍 DR..." oninput="re()"></th>
+                        <th><input class="c-src" placeholder="🔍 Date..." oninput="re()"></th>
+                        <th><input class="c-src" placeholder="🔍 Type..." oninput="re()"></th>
+                        <th><input class="c-src" placeholder="🔍 Acc..." oninput="re()"></th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="b-inv"></tbody>
+            </table>
+        </div>
+
+    </div>
+</main>
+
+<!-- Pull-out Modal -->
+<div id="pullout-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closePulloutModal()">
+    <div class="modal-box pullout-modal-box">
+        <div class="modal-header">
+            <span>📤 PULL-OUT SLIP</span>
+            <button class="modal-close" onclick="closePulloutModal()">✕</button>
+        </div>
+
+        <!-- Item Info + Add Form -->
+        <div class="po-add-form" id="po-add-form">
+            <!-- filled by JS -->
+        </div>
+
+        <!-- Slip Table -->
+        <div class="po-slip-section">
+            <div class="po-slip-header">
+                <span class="po-slip-title">PULL-OUT ITEMS</span>
+                <span id="po-slip-count" class="detail-count">0 items</span>
+            </div>
+            <div class="t-wrap" style="max-height:220px;flex-grow:0;">
+                <table style="min-width:500px;">
+                    <thead>
+                        <tr class="thead-main">
+                            <th width="30">#</th>
+                            <th width="82">LOCATION</th>
+                            <th>ITEM CODE</th>
+                            <th width="115">LOT NO.</th>
+                            <th width="90">STATUS</th>
+                            <th width="80">PULL QTY</th>
+                            <th width="40"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="po-slip-body">
+                        <tr><td colspan="7" style="text-align:center;color:#2a3a50;font-style:italic;padding:18px;">No items added yet.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- POS Control + Commit -->
+        <div class="po-commit-area">
+            <div class="fg" style="flex:1;">
+                <label>POS CONTROL NO.</label>
+                <input type="text" id="po-pos-ctrl" placeholder="POS2602-XXX" style="font-family:'JetBrains Mono',monospace;font-size:12px;">
+            </div>
+            <button class="btn-xls-commit" style="align-self:flex-end;padding:9px 20px;" onclick="commitPullout()">✓ COMMIT PULL-OUT</button>
+        </div>
+    </div>
+</div>
+
+
+<!-- Pull-out Modal -->
+<div id="pullout-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closePulloutModal()">
+    <div class="modal-box pullout-modal-box">
+        <div class="modal-header">
+            <span>📤 PULL-OUT SLIP</span>
+            <button class="modal-close" onclick="closePulloutModal()">✕</button>
+        </div>
+        <div class="po-add-form" id="po-add-form"></div>
+        <div class="po-slip-section">
+            <div class="po-slip-header">
+                <span class="po-slip-title">PULL-OUT ITEMS</span>
+                <span id="po-slip-count" class="detail-count">0 items</span>
+            </div>
+            <div class="t-wrap" style="max-height:200px;flex-grow:0;">
+                <table style="min-width:500px;">
+                    <thead><tr class="thead-main">
+                        <th width="30">#</th><th width="82">LOCATION</th>
+                        <th>ITEM CODE</th><th width="115">LOT NO.</th>
+                        <th width="90">STATUS</th><th width="80">PULL QTY</th>
+                        <th width="40"></th>
+                    </tr></thead>
+                    <tbody id="po-slip-body"></tbody>
+                </table>
+            </div>
+        </div>
+        <div class="po-commit-area">
+            <div class="fg" style="flex:1;">
+                <label>POS CONTROL NO.</label>
+                <input type="text" id="po-pos-ctrl" placeholder="POS2602-XXX" style="font-family:monospace;font-size:12px;">
+            </div>
+            <button class="btn-xls-commit" style="align-self:flex-end;padding:9px 20px;" onclick="commitPullout()">CHECK MARK COMMIT PULL-OUT</button>
+        </div>
+    </div>
+</div>
+
+<!-- Copy toast -->
+<div id="copy-toast" class="copy-toast">📋 Copied!</div>
+
+<script src="script.js"></script>
+<script>
+/* ── ENTER KEY LOGIN ── */
+['log-email','log-pass'].forEach(id=>{
+    document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')checkLogin();});
+});
+
+/* ── PALLET TAG PRINT ── */
+function printTag(idx){
+    const x=db[idx]; if(!x) return;
+    document.getElementById('print-area').innerHTML=`
+        <div class="pallet-tag">
+            <div class="tag-header"><div class="company">TLGP WAREHOUSE MANAGEMENT</div><div class="title">PALLET TAG</div></div>
+            <div class="tag-fields">
+                <div class="tag-field"><div class="tag-label">ITEM CODE</div>
+                    <div class="tag-value ${x.cod&&x.cod.length>12?'small':''}">${x.cod||'—'}</div></div>
+                <div class="tag-field"><div class="tag-label">QUANTITY</div>
+                    <div class="tag-value">${parseNum(x.qty).toLocaleString()}</div></div>
+                <div class="tag-field"><div class="tag-label">LOCATION</div>
+                    <div class="tag-value medium">${x.loc||'—'}</div></div>
+                <div class="tag-field"><div class="tag-label">DATE</div>
+                    <div class="tag-value medium">${x.dat||'—'}</div></div>
+            </div>
+            <div class="tag-footer">
+                <div class="printed">Printed: ${new Date().toLocaleString('en-GB')}</div>
+                <div class="status-box">${x.sts||'PASSED'}</div>
+            </div>
+        </div>`;
+    document.getElementById('print-area').style.display='block';
+    document.getElementById('print-close').style.display='block';
+    window.print();
+}
+function closePrint(){
+    document.getElementById('print-area').style.display='none';
+    document.getElementById('print-close').style.display='none';
+}
+
+/* ═══════════════════════════════════════════════
+   DRAG-TO-SELECT on inventory table
+   - mousedown on a loc-cell starts selection
+   - mousemove over loc-cells highlights them
+   - mouseup finalises; Ctrl+C or auto-copy copies just the location text
+   - works for both occupied (colored) and empty (faded) rows
+   ═══════════════════════════════════════════════ */
+let isDragging = false;
+let dragStart  = null;
+let selectedCells = new Set();
+
+const INV = document.getElementById('b-inv');
+const toast = document.getElementById('copy-toast');
+
+function showToast(msg){
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(()=>toast.classList.remove('show'), 1800);
+}
+
+function cellLoc(el){
+    // returns the text of the first td in that row (location value)
+    const row = el.closest('tr');
+    return row ? row.querySelector('td.loc-cell')?.textContent?.trim() : null;
+}
+
+function highlightSelected(){
+    // clear previous
+    INV.querySelectorAll('td.loc-cell.sel').forEach(c=>c.classList.remove('sel'));
+    selectedCells.forEach(tr=>{
+        const lc = tr.querySelector('td.loc-cell');
+        if(lc) lc.classList.add('sel');
+    });
+    // show hint when something selected
+    const hint = document.getElementById('drag-hint');
+    if(hint) hint.style.display = selectedCells.size > 0 ? 'flex' : 'none';
+}
+
+function copySelected(){
+    if(!selectedCells.size) return;
+    // Collect locs in DOM order
+    const allRows = Array.from(INV.querySelectorAll('tr'));
+    const locs = allRows.filter(r=>selectedCells.has(r)).map(r=>r.querySelector('td.loc-cell')?.textContent?.trim()).filter(Boolean);
+    if(!locs.length) return;
+    const text = locs.join('\n');
+    navigator.clipboard.writeText(text).then(()=>showToast(`📋 Copied ${locs.length} location${locs.length>1?'s':''}`)).catch(()=>{
+        const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);
+        showToast(`📋 Copied ${locs.length} location${locs.length>1?'s':''}`);
+    });
+    // clear selection after copy
+    setTimeout(()=>{ selectedCells.clear(); highlightSelected(); },400);
+}
+
+// Mousedown — only start drag on a loc-cell in tbody
+document.addEventListener('mousedown', e=>{
+    const lc = e.target.closest('#b-inv td.loc-cell');
+    if(!lc) return;
+    e.preventDefault();
+    isDragging = true;
+    dragStart = lc.closest('tr');
+    selectedCells.clear();
+    selectedCells.add(dragStart);
+    highlightSelected();
+});
+
+// Mousemove — extend selection
+document.addEventListener('mousemove', e=>{
+    if(!isDragging) return;
+    const lc = e.target.closest('#b-inv td.loc-cell');
+    if(!lc) return;
+    const row = lc.closest('tr');
+    if(!row) return;
+    // range: from dragStart to current row
+    const allRows = Array.from(INV.querySelectorAll('tr'));
+    const si = allRows.indexOf(dragStart);
+    const ei = allRows.indexOf(row);
+    const [from,to] = si<=ei ? [si,ei] : [ei,si];
+    selectedCells.clear();
+    for(let i=from;i<=to;i++) selectedCells.add(allRows[i]);
+    highlightSelected();
+});
+
+// Mouseup — end drag, auto-copy
+document.addEventListener('mouseup', e=>{
+    if(!isDragging) return;
+    isDragging = false;
+    if(selectedCells.size > 0) copySelected();
+});
+
+// Ctrl+C fallback
+document.addEventListener('keydown', e=>{
+    if((e.ctrlKey||e.metaKey) && e.key==='c' && selectedCells.size>0){
+        copySelected();
+    }
+    // Esc clears
+    if(e.key==='Escape'){
+        selectedCells.clear(); highlightSelected();
+        const hint=document.getElementById('drag-hint');
+        if(hint) hint.style.display='none';
+    }
+});
+
+// Click elsewhere clears selection
+document.addEventListener('mousedown', e=>{
+    if(!e.target.closest('#b-inv td.loc-cell') && selectedCells.size>0){
+        selectedCells.clear(); highlightSelected();
+        const hint=document.getElementById('drag-hint');
+        if(hint) hint.style.display='none';
+    }
+},{capture:false});
+
+
+/* ── Pull-out modal fill ── */
+window.showPulloutModal = function(idx) {
+    const item = db[idx]; if(!item) return;
+    pulloutTarget = { idx, item };
+    pulloutSlipRows = [];
+    const maxQ = parseNum(item.qty);
+    document.getElementById('po-add-form').innerHTML = `
+        <div class="po-item-info">
+            <div class="po-info-field"><span class="po-info-lbl">LOCATION</span><span class="po-info-val loc-cell">${item.loc}</span></div>
+            <div class="po-info-field"><span class="po-info-lbl">ITEM CODE</span><span class="po-info-val"><b>${item.cod}</b></span></div>
+            <div class="po-info-field"><span class="po-info-lbl">LOT NO.</span><span class="po-info-val">${item.lot||'—'}</span></div>
+            <div class="po-info-field"><span class="po-info-lbl">STATUS</span><span class="po-info-val"><span class="bdg status-${(item.sts||'').replace(/\\s/g,'')}">${item.sts}</span></span></div>
+            <div class="po-info-field"><span class="po-info-lbl">AVAILABLE QTY</span><span class="po-info-val qty-normal">${maxQ.toLocaleString()}</span></div>
+            <div class="po-info-field"><span class="po-info-lbl">DR / INVOICE</span><span class="po-info-val">${item.dr||'—'}</span></div>
+        </div>
+        <div class="po-add-row">
+            <div class="fg"><label>QTY TO PULL OUT</label><input type="number" id="po-qty" value="${maxQ}" min="1" max="${maxQ}" style="font-weight:700;color:#5aa6f8;font-family:monospace;font-size:14px;"></div>
+            <div class="fg" style="flex:2;"><label>REMARKS (optional)</label><input type="text" id="po-remarks" placeholder="e.g. Pulled for production"></div>
+            <button class="btn-xls-commit" style="align-self:flex-end;padding:8px 16px;font-size:11px;" onclick="addToPulloutSlip()">+ ADD TO SLIP</button>
+        </div>
+    `;
+    document.getElementById('po-qty').addEventListener('keydown',e=>{ if(e.key==='Enter') addToPulloutSlip(); });
+    renderPulloutSlip();
+    document.getElementById('pullout-modal').style.display='flex';
+    setTimeout(()=>{ const q=document.getElementById('po-qty'); if(q){q.focus();q.select();} },50);
+};
+
+const _origRenderPO2 = renderPulloutSlip;
+renderPulloutSlip = function() {
+    _origRenderPO2();
+    const cnt = document.getElementById('po-slip-count');
+    if(cnt) cnt.textContent = `${pulloutSlipRows.length} item${pulloutSlipRows.length!==1?'s':''}`;
+};
+
+</script>
+</body>
+</html>

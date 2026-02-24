@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TLGP WMS — Pallet Storing Tag</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+    <style>
+    /* ══ PRINT STYLES ══════════════════════════════════════════════════════
+       One tag per A4 page, LANDSCAPE, matching Excel PLC-TPC-019 exactly
+       Font sizes: Label=14pt, Value=80pt, Title=20pt, Company=14pt
+    ══════════════════════════════════════════════════════════════════════ */
+    @media print {
+        body > * { display: none !important; }
+        #tag-print-area { display: block !important; }
+        .print-close-tag { display: none !important; }
+        @page { size: A4 landscape; margin: 8mm 10mm; }
+    }
+
+    #tag-print-area { display: none; position: fixed; inset: 0; z-index: 99999; background: #fff; overflow: auto; }
+    .print-close-tag { position: fixed; top: 12px; right: 16px; z-index: 999999; background: #f05454; color: #fff; border: none; border-radius: 6px; padding: 10px 18px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; }
+
+    /* Each tag is a full A4 LANDSCAPE page — 297mm × 210mm (margins 8mm top/bottom, 10mm left/right) */
+    .tag-page {
+        width: 277mm;   /* 297mm - 2×10mm margins */
+        height: 194mm;  /* 210mm - 2×8mm margins */
+        margin: 0 auto;
+        background: #fff;
+        font-family: Arial, Helvetica, sans-serif;
+        color: #000;
+        box-sizing: border-box;
+        padding: 0;
+        page-break-after: always;
+        break-after: page;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    .tag-page:last-child { page-break-after: avoid; break-after: avoid; }
+
+    /* Company header row */
+    .tag-company {
+        font-size: 14pt;
+        font-weight: bold;
+        padding: 1.5mm 3mm;
+        border-left: 2.5px solid #000;
+        border-top: 2.5px solid #000;
+        border-right: 2.5px solid #000;
+        line-height: 1.2;
+        flex-shrink: 0;
+    }
+
+    /* Title row */
+    .tag-title-row {
+        font-size: 20pt;
+        font-weight: bold;
+        text-align: center;
+        border-left: 2.5px solid #000;
+        border-right: 2.5px solid #000;
+        border-top: 1px solid #ccc;
+        padding: 1.5mm 3mm;
+        letter-spacing: 2px;
+        flex-shrink: 0;
+    }
+
+    /* Data rows: label left, value right */
+    .tag-field {
+        display: flex;
+        border-left: 2.5px solid #000;
+        border-right: 2.5px solid #000;
+        border-top: 1px solid #ccc;
+        border-bottom: none;
+        flex: 1;
+        min-height: 0;
+    }
+    .tag-field-label {
+        font-size: 14pt;
+        font-weight: bold;
+        padding: 2mm 3mm;
+        display: flex;
+        align-items: center;
+        width: 44mm;
+        flex-shrink: 0;
+        line-height: 1.3;
+        border-right: 1px solid #ccc;
+    }
+    .tag-field-value {
+        font-size: 80pt;
+        font-weight: normal;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 1;
+        text-align: center;
+        overflow: hidden;
+        line-height: 1;
+        word-break: break-all;
+        padding: 0 4mm;
+    }
+    /* LOT NUMBER is bold */
+    .tag-field-value.bold { font-weight: bold; }
+
+    /* Bottom footer row */
+    .tag-footer {
+        border: 2.5px solid #000;
+        border-top: 1px solid #ccc;
+        padding: 1.5mm 3mm;
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        flex-shrink: 0;
+    }
+    .tag-doc-ref {
+        font-size: 11pt;
+        font-weight: bold;
+        text-align: right;
+    }
+
+    /* ══ APP STYLES ═══════════════════════════════════════════════════════ */
+    .tag-slip-card {
+        background: #141921; border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.07);
+        overflow: hidden; flex-shrink: 0;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    }
+    .tag-slip-banner {
+        background: linear-gradient(135deg, #0a1a0a 0%, #10280f 60%, #0a1a0a 100%);
+        padding: 12px 18px 10px;
+        display: flex; align-items: center; justify-content: space-between;
+        border-bottom: 2px solid rgba(52,211,153,0.25);
+    }
+    .tag-banner-left { display: flex; flex-direction: column; gap: 1px; }
+    .tag-company-small { font-size: 9px; color: rgba(255,255,255,0.35); letter-spacing: 0.16em; text-transform: uppercase; font-weight: 600; }
+    .tag-slip-big-title { font-size: 20px; font-weight: 900; color: #e8ffe8; letter-spacing: 0.22em; text-transform: uppercase; text-shadow: 0 2px 10px rgba(52,211,153,0.3); }
+
+    .tag-form-grid {
+        background: #141921; border-radius: 9px; padding: 12px 14px;
+        flex-shrink: 0; border: 1px solid rgba(255,255,255,0.05);
+        border-top: 2px solid rgba(52,211,153,0.4);
+        display: grid; grid-template-columns: repeat(4,1fr); gap: 8px;
+    }
+    .tag-grid-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
+
+    /* Inventory results table for adding items */
+    .tag-inv-section {
+        background: #141921; border-radius: 9px;
+        border: 1px solid rgba(255,255,255,0.05);
+        border-top: 2px solid rgba(52,211,153,0.35);
+        display: flex; flex-direction: column; flex-grow: 1; overflow: hidden;
+    }
+    .tag-inv-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 8px 14px; background: #0e1117;
+        border-bottom: 1px solid rgba(255,255,255,0.05); flex-shrink: 0;
+    }
+    .tag-inv-title { font-size: 11px; font-weight: 800; color: #e0e6f0; letter-spacing: 0.1em; display: flex; align-items: center; gap: 8px; }
+    .tag-inv-dot { width: 7px; height: 7px; background: #34d399; border-radius: 50%; animation: pd 2s infinite; box-shadow: 0 0 5px #34d399; }
+
+    .tag-search-bar {
+        display: grid; grid-template-columns: 1fr 1fr 1fr auto;
+        gap: 8px; padding: 8px 14px; background: #0b0f16;
+        border-bottom: 1px solid rgba(255,255,255,0.04); flex-shrink: 0;
+    }
+
+    .tag-table-wrap { overflow: auto; flex-grow: 1; }
+    .tag-table-wrap table { width: 100%; min-width: 900px; border-collapse: collapse; }
+
+    .tag-queue-section {
+        background: #141921; border-radius: 9px;
+        border: 1px solid rgba(255,255,255,0.05);
+        border-top: 2px solid rgba(52,211,153,0.35);
+        display: flex; flex-direction: column; max-height: 220px; overflow: hidden; flex-shrink: 0;
+    }
+    .tag-queue-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 8px 14px; background: #0e1117;
+        border-bottom: 1px solid rgba(255,255,255,0.05); flex-shrink: 0;
+    }
+    .tag-queue-wrap { overflow-y: auto; flex-grow: 1; }
+    .tag-queue-wrap table { width: 100%; min-width: 700px; border-collapse: collapse; }
+
+    .btn-green { background: rgba(52,211,153,0.1); color: #34d399; border-color: rgba(52,211,153,0.28); }
+    .btn-green:hover { background: #34d399; color: #080c12; }
+
+    /* ── empty state ── */
+    .tag-empty { flex-grow: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: #2a3a50; font-style: italic; font-size: 12px; padding: 30px; }
+    </style>
+</head>
+<body>
+
+<div id="tag-print-area"></div>
+<button class="print-close-tag" id="print-close-tag" style="display:none;" onclick="closeTagPrint()">✕ CLOSE PRINT</button>
+
+<!-- LOGIN -->
+<div id="login-overlay">
+    <div class="login-card">
+        <div class="login-top"><span class="icon">📦</span><h1>TLGP WMS</h1><p>WAREHOUSE MANAGEMENT SYSTEM</p></div>
+        <div class="login-body">
+            <div class="lf"><label>Email Address</label><input type="email" id="log-email" placeholder="user@company.com" autocomplete="off"></div>
+            <div class="lf"><label>Password</label><input type="password" id="log-pass" placeholder="••••••••"></div>
+            <p id="log-err">⚠ Invalid credentials. Please try again.</p>
+            <button class="login-btn" onclick="checkLogin()">LOGIN TO SYSTEM</button>
+        </div>
+        <div class="login-foot">AUTHORIZED PERSONNEL ONLY</div>
+    </div>
+</div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+    <div class="sidebar-header">
+        <div class="sidebar-icon">📦</div>
+        <div><span class="brand">TLGP WMS</span><span class="ver">PRO v2.0</span></div>
+    </div>
+    <div class="sb-sec">
+        <span class="sb-lbl">NAVIGATION</span>
+        <a class="nav-btn" href="index.html">📦 &nbsp;INVENTORY LIST</a>
+        <a class="nav-btn" href="transfer.html">🚚 &nbsp;TRANSFER IN</a>
+        <a class="nav-btn" href="pullout.html">📤 &nbsp;PULL-OUT SLIP</a>
+        <a class="nav-btn active" href="storingtag.html">🏷 &nbsp;STORING TAG</a>
+        <a class="nav-btn" href="history.html">📜 &nbsp;SYSTEM LOGS</a>
+    </div>
+    <div class="sb-bot">
+        <button class="btn-danger" onclick="mr()">⚠ MASTER RESET</button>
+    </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+<div class="page-content">
+
+    <!-- Header Card -->
+    <div class="tag-slip-card">
+        <div class="tag-slip-banner">
+            <div class="tag-banner-left">
+                <div class="tag-company-small">Toshiba Logistics Phils. Corp.</div>
+                <div class="tag-slip-big-title">🏷 PALLET STORING TAG</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <span class="log-summary-badge" id="queue-badge">0 tags queued</span>
+                <button class="btn-print-slip" onclick="printAllTags()" style="background:rgba(52,211,153,0.1);border-color:rgba(52,211,153,0.3);color:#34d399;">🖨 PRINT ALL TAGS</button>
+                <button class="btn-xls-action" onclick="clearQueue()">✕ CLEAR QUEUE</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search Filters + Inventory Table -->
+    <div class="tag-inv-section">
+        <div class="tag-inv-header">
+            <div class="tag-inv-title"><span class="tag-inv-dot"></span>INVENTORY — SELECT ITEMS TO TAG</div>
+            <div style="font-size:10px;color:#3a4a60;font-style:italic;">Click an item row to add it to the print queue</div>
+        </div>
+        <div class="tag-search-bar">
+            <div class="fg"><label>Search Location</label><input type="text" id="ts-loc" class="c-src" placeholder="🔍 TRA0101..." oninput="filterTagInv()"></div>
+            <div class="fg"><label>Search Item Code</label><input type="text" id="ts-cod" class="c-src" placeholder="🔍 SSBW010..." oninput="filterTagInv()"></div>
+            <div class="fg"><label>Search Lot No.</label><input type="text" id="ts-lot" class="c-src" placeholder="🔍 Lot number..." oninput="filterTagInv()"></div>
+            <button class="btn-xls-action" onclick="addAllFiltered()" style="align-self:flex-end;white-space:nowrap;">+ ADD ALL FILTERED</button>
+        </div>
+        <div class="tag-table-wrap">
+            <table>
+                <thead>
+                    <tr class="thead-main">
+                        <th width="82">LOCATION</th>
+                        <th width="160">ITEM CODE</th>
+                        <th width="120">LOT NO.</th>
+                        <th width="80">QTY</th>
+                        <th width="90">STATUS</th>
+                        <th width="90">PALLET</th>
+                        <th width="95">DATE</th>
+                        <th width="110">TYPE</th>
+                        <th width="140">DR/INVOICE</th>
+                        <th width="90">ACTION</th>
+                    </tr>
+                </thead>
+                <tbody id="tag-inv-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Tag Print Queue -->
+    <div class="tag-queue-section">
+        <div class="tag-queue-header">
+            <div class="tag-inv-title"><span class="tag-inv-dot"></span>PRINT QUEUE — <span id="queue-count">0</span> TAGS</div>
+            <div style="font-size:10px;color:#3a4a60;font-style:italic;">Items below will each print as one full A4 pallet tag</div>
+        </div>
+        <div id="queue-empty" class="tag-empty">
+            <div style="font-size:32px;opacity:.25;">🏷</div>
+            <div>No items in queue. Click an inventory item to add it.</div>
+        </div>
+        <div class="tag-queue-wrap" id="queue-wrap" style="display:none;">
+            <table>
+                <thead>
+                    <tr class="thead-main">
+                        <th width="40">NO.</th>
+                        <th width="82">LOCATION</th>
+                        <th width="160">ITEM CODE</th>
+                        <th width="120">LOT NO.</th>
+                        <th width="80">QTY</th>
+                        <th width="95">DATE</th>
+                        <th width="140">DR/INVOICE</th>
+                        <th width="70">ACTION</th>
+                    </tr>
+                </thead>
+                <tbody id="queue-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+</main>
+
+<div id="copy-toast" class="copy-toast"></div>
+
+<script src="script.js"></script>
+<script>
+['log-email','log-pass'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') checkLogin(); });
+});
+
+// ── TAG QUEUE ────────────────────────────────────
+let tagQueue = []; // array of item objects to print
+
+function renderTagInv(items) {
+    const tbody = document.getElementById('tag-inv-body');
+    if (!items || !items.length) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:#2a3a50;padding:24px;font-style:italic;">No matching items found.</td></tr>`;
+        return;
+    }
+    tbody.innerHTML = items.slice(0, 200).map((x, i) => {
+        const idx = db.indexOf(x);
+        return `<tr style="cursor:pointer;" onclick="addToQueue(${idx})" title="Click to add to print queue">
+            <td class="loc-cell">${x.loc}</td>
+            <td><b>${x.cod}</b></td>
+            <td>${x.lot || '—'}</td>
+            <td class="qty-normal">${parseNum(x.qty).toLocaleString()}</td>
+            <td><span class="bdg status-${(x.sts||'').replace(/\s/g,'')}">${x.sts||'—'}</span></td>
+            <td>${x.pal||'—'}</td>
+            <td>${x.dat||'—'}</td>
+            <td>${x.typ||'—'}</td>
+            <td>${x.dr||'—'}</td>
+            <td><button class="btn btn-green" onclick="event.stopPropagation();addToQueue(${idx})">+ TAG</button></td>
+        </tr>`;
+    }).join('');
+    if (items.length > 200) {
+        tbody.innerHTML += `<tr><td colspan="10" style="text-align:center;color:#3a4a60;font-size:10px;padding:8px;font-style:italic;">Showing 200 of ${items.length} — refine search to see more.</td></tr>`;
+    }
+}
+
+function filterTagInv() {
+    const loc = (document.getElementById('ts-loc').value || '').toLowerCase();
+    const cod = (document.getElementById('ts-cod').value || '').toLowerCase();
+    const lot = (document.getElementById('ts-lot').value || '').toLowerCase();
+    const active = db.filter(x => parseNum(x.qty) > 0);
+    const filtered = active.filter(x =>
+        (!loc || (x.loc||'').toLowerCase().includes(loc)) &&
+        (!cod || (x.cod||'').toLowerCase().includes(cod)) &&
+        (!lot || (x.lot||'').toLowerCase().includes(lot))
+    );
+    renderTagInv(filtered);
+}
+
+function addAllFiltered() {
+    const loc = (document.getElementById('ts-loc').value || '').toLowerCase();
+    const cod = (document.getElementById('ts-cod').value || '').toLowerCase();
+    const lot = (document.getElementById('ts-lot').value || '').toLowerCase();
+    const active = db.filter(x => parseNum(x.qty) > 0);
+    const filtered = active.filter(x =>
+        (!loc || (x.loc||'').toLowerCase().includes(loc)) &&
+        (!cod || (x.cod||'').toLowerCase().includes(cod)) &&
+        (!lot || (x.lot||'').toLowerCase().includes(lot))
+    );
+    filtered.slice(0, 100).forEach(x => {
+        if (!tagQueue.find(q => q.loc === x.loc && q.cod === x.cod && q.lot === x.lot)) {
+            tagQueue.push({...x});
+        }
+    });
+    renderQueue();
+    showToast(`✅ Added ${Math.min(filtered.length, 100)} item(s) to queue`);
+}
+
+function addToQueue(idx) {
+    const x = db[idx];
+    if (!x) return;
+    tagQueue.push({...x});
+    renderQueue();
+    showToast(`🏷 ${x.cod} added to tag queue (${tagQueue.length} total)`);
+}
+
+function removeFromQueue(i) {
+    tagQueue.splice(i, 1);
+    renderQueue();
+}
+
+function clearQueue() {
+    if (tagQueue.length && !confirm('Clear all items from tag queue?')) return;
+    tagQueue = [];
+    renderQueue();
+}
+
+function renderQueue() {
+    const badge = document.getElementById('queue-badge');
+    const count = document.getElementById('queue-count');
+    const empty = document.getElementById('queue-empty');
+    const wrap = document.getElementById('queue-wrap');
+    const body = document.getElementById('queue-body');
+
+    badge.textContent = `${tagQueue.length} tag${tagQueue.length !== 1 ? 's' : ''} queued`;
+    count.textContent = tagQueue.length;
+
+    if (!tagQueue.length) {
+        empty.style.display = 'flex';
+        wrap.style.display = 'none';
+        return;
+    }
+    empty.style.display = 'none';
+    wrap.style.display = 'block';
+
+    body.innerHTML = tagQueue.map((x, i) => `
+        <tr>
+            <td>${i+1}</td>
+            <td class="loc-cell">${x.loc}</td>
+            <td><b>${x.cod}</b></td>
+            <td>${x.lot||'—'}</td>
+            <td class="qty-normal">${parseNum(x.qty).toLocaleString()}</td>
+            <td>${x.dat||'—'}</td>
+            <td>${x.dr||'—'}</td>
+            <td><button class="btn btn-red" onclick="removeFromQueue(${i})">✕</button></td>
+        </tr>
+    `).join('');
+}
+
+// ── PRINT ALL TAGS ────────────────────────────────
+function printAllTags() {
+    if (!tagQueue.length) { alert('❌ No items in tag queue.'); return; }
+
+    const pages = tagQueue.map((x, i) => {
+        const qty = parseNum(x.qty).toLocaleString();
+        // Format date nicely for display
+        let storingDate = x.dat || '—';
+        try {
+            if (storingDate && storingDate.includes('-')) {
+                const [y,m,d] = storingDate.split('-');
+                storingDate = `${m}/${d}/${y}`;
+            }
+        } catch(e) {}
+
+        // Dynamically scale font for very long item codes
+        const codLen = (x.cod||'').length;
+        const codFontSize = codLen > 12 ? Math.max(30, Math.floor(80 * 10 / codLen)) : 80;
+        const lotFontSize = ((x.lot||'').length) > 12 ? Math.max(30, Math.floor(80 * 10 / (x.lot||'x').length)) : 80;
+        const locFontSize = ((x.loc||'').length) > 9 ? 60 : 80;
+
+        return `
+        <div class="tag-page">
+            <div class="tag-company">TOSHIBA LOGISTICS PHILIPPINES CORP.</div>
+            <div class="tag-title-row">PALLET IDENTIFICATION TAG</div>
+
+            <div class="tag-field">
+                <div class="tag-field-label">PRODUCT/<br>ITEM CODE:</div>
+                <div class="tag-field-value" style="font-size:${codFontSize}pt;">${x.cod||'—'}</div>
+            </div>
+
+            <div class="tag-field">
+                <div class="tag-field-label">LOT<br>NUMBER:</div>
+                <div class="tag-field-value bold" style="font-size:${lotFontSize}pt;">${x.lot||'—'}</div>
+            </div>
+
+            <div class="tag-field">
+                <div class="tag-field-label">QUANTITY :</div>
+                <div class="tag-field-value">${qty}</div>
+            </div>
+
+            <div class="tag-field">
+                <div class="tag-field-label">LOCATION:</div>
+                <div class="tag-field-value" style="font-size:${locFontSize}pt;">${x.loc||'—'}</div>
+            </div>
+
+            <div class="tag-field" style="border-bottom:2.5px solid #000;">
+                <div class="tag-field-label">STORING<br>DATE:</div>
+                <div class="tag-field-value">${storingDate}</div>
+            </div>
+
+            <div class="tag-footer">
+                <div class="tag-doc-ref">PLC-TPC-019.R00</div>
+            </div>
+        </div>`;
+    }).join('');
+
+    document.getElementById('tag-print-area').innerHTML = pages;
+    document.getElementById('tag-print-area').style.display = 'block';
+    document.getElementById('print-close-tag').style.display = 'block';
+    window.print();
+}
+
+function closeTagPrint() {
+    document.getElementById('tag-print-area').style.display = 'none';
+    document.getElementById('print-close-tag').style.display = 'none';
+}
+
+// ── TOAST ─────────────────────────────────────────
+function showToast(msg) {
+    const toast = document.getElementById('copy-toast');
+    if (!toast) return;
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => toast.classList.remove('show'), 2200);
+}
+
+// ── WATCH DB CHANGES ──────────────────────────────
+const _origOnload = window.onload;
+window.onload = function() {
+    if (_origOnload) _origOnload();
+};
+
+// Re-render when DB loads, with optional prefill from TAG button on index
+const _dbInterval = setInterval(() => {
+    if (db.length > 0) {
+        clearInterval(_dbInterval);
+        const prefillLoc = sessionStorage.getItem('st_prefill_loc');
+        const prefillCod = sessionStorage.getItem('st_prefill_cod');
+        if (prefillLoc || prefillCod) {
+            sessionStorage.removeItem('st_prefill_loc');
+            sessionStorage.removeItem('st_prefill_cod');
+            if (prefillLoc) document.getElementById('ts-loc').value = prefillLoc;
+            if (prefillCod) document.getElementById('ts-cod').value = prefillCod;
+        }
+        filterTagInv();
+    }
+}, 150);
+
+// Also watch for real-time updates
+const _origRdb = setInterval(() => {
+    if (typeof rdb !== 'undefined') {
+        clearInterval(_origRdb);
+        rdb.ref('j_db').on('value', () => {
+            setTimeout(filterTagInv, 100);
+        });
+    }
+}, 200);
+</script>
+
+<style>
+.copy-toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+    background: #1e2d42; border: 1px solid rgba(52,211,153,0.3);
+    color: #c8d4e8; font-size: 12px; font-weight: 600;
+    padding: 10px 18px; border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    opacity: 0; transform: translateY(10px); transition: 0.22s;
+    pointer-events: none;
+}
+.copy-toast.show { opacity: 1; transform: none; }
+</style>
+</body>
+</html>

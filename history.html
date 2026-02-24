@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TLGP WMS — System Logs</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+    <style>
+    @media print {
+        body > * { display: none !important; }
+        #hist-print-area { display: block !important; }
+        #hist-print-close { display: none !important; }
+    }
+    /* Storing tag landscape for history print — 1 tag per A4 landscape page */
+    .hist-tag-page {
+        width:277mm; height:194mm; margin:0 auto; background:#fff;
+        font-family:Arial,Helvetica,sans-serif; color:#000; box-sizing:border-box;
+        padding:0; page-break-after:always; break-after:page;
+        display:flex; flex-direction:column; overflow:hidden;
+    }
+    .hist-tag-page:last-child { page-break-after:avoid; break-after:avoid; }
+    .hist-tag-company { font-size:14pt;font-weight:bold;padding:1.5mm 3mm;border-left:2.5px solid #000;border-top:2.5px solid #000;border-right:2.5px solid #000;line-height:1.2;flex-shrink:0; }
+    .hist-tag-title-row { font-size:20pt;font-weight:bold;text-align:center;border-left:2.5px solid #000;border-right:2.5px solid #000;border-top:1px solid #ccc;padding:1.5mm 3mm;letter-spacing:2px;flex-shrink:0; }
+    .hist-tag-field { display:flex;border-left:2.5px solid #000;border-right:2.5px solid #000;border-top:1px solid #ccc;flex:1;min-height:0; }
+    .hist-tag-field-label { font-size:14pt;font-weight:bold;padding:2mm 3mm;display:flex;align-items:center;width:44mm;flex-shrink:0;line-height:1.3;border-right:1px solid #ccc; }
+    .hist-tag-field-value { font-size:80pt;display:flex;align-items:center;justify-content:center;flex:1;text-align:center;overflow:hidden;line-height:1;word-break:break-all;padding:0 4mm; }
+    .hist-tag-field-value.bold { font-weight:bold; }
+    .hist-tag-footer { border:2.5px solid #000;border-top:1px solid #ccc;padding:1.5mm 3mm;display:flex;justify-content:flex-end;align-items:center;flex-shrink:0; }
+    /* Compressed slip styles for history A4 portrait */
+    .hist-slip-page { width:190mm; min-height:277mm; margin:0 auto; background:#fff; font-family:Arial,sans-serif; font-size:8.5pt; color:#000; }
+    .hist-slip-title { text-align:center;font-size:18pt;font-weight:900;letter-spacing:4px;margin-bottom:3mm;border-bottom:2.5px solid #222;padding-bottom:2mm; }
+    .hist-slip-company { text-align:center;font-size:9pt;margin-bottom:3mm; }
+    .hist-slip-meta { display:flex;justify-content:space-between;margin-bottom:3mm; }
+    .hist-slip-meta-left p { margin:0 0 1.5mm;font-size:9pt;font-weight:600; }
+    .hist-ctrl-label { font-size:8pt;color:#555;margin-bottom:2px; }
+    .hist-ctrl-no { font-size:12pt;font-weight:900;font-family:'Courier New',monospace;border:2px solid #111;padding:2px 8px;display:inline-block; }
+    .hist-slip-table { width:100%;border-collapse:collapse;margin-top:2mm; }
+    .hist-slip-table th { background:#d0d0d0;border:1.5px solid #444;padding:3px 3px;font-size:7pt;font-weight:700;text-align:center; }
+    .hist-slip-table td { border:1px solid #bbb;padding:2px 3px;font-size:8pt;text-align:center; }
+    .hist-slip-table td.l { text-align:left; }
+    .hist-slip-table td.r { text-align:right; }
+    .hist-slip-table tr.total-row td { font-weight:900;background:#e8e8e8;border-top:2px solid #333; }
+    .hist-slip-table tr.data-row:nth-child(even) td { background:#f8f8f8; }
+    .hist-slip-note { font-size:7.5pt;color:#555;margin-top:2mm;font-style:italic; }
+    .hist-slip-sigs { display:flex;justify-content:space-between;margin-top:10mm;gap:8mm; }
+    .hist-slip-sig { flex:1;text-align:center;border-top:1.5px solid #333;padding-top:3px;font-size:8.5pt;font-weight:700; }
+    .hist-slip-footer { text-align:right;margin-top:4mm;font-size:7.5pt;color:#888;font-style:italic; }
+    </style>
+<body>
+
+<div id="hist-print-area" style="display:none;position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;"></div>
+<button id="hist-print-close" style="display:none;position:fixed;top:12px;right:16px;z-index:999999;background:#dc2626;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;" onclick="closeHistPrint()">✕ CLOSE PRINT</button>
+
+<!-- LOGIN -->
+<div id="login-overlay">
+    <div class="login-card">
+        <div class="login-top">
+            <span class="icon">📦</span>
+            <h1>TLGP WMS</h1>
+            <p>WAREHOUSE MANAGEMENT SYSTEM</p>
+        </div>
+        <div class="login-body">
+            <div class="lf"><label>Email Address</label><input type="email" id="log-email" placeholder="user@company.com" autocomplete="off"></div>
+            <div class="lf"><label>Password</label><input type="password" id="log-pass" placeholder="••••••••"></div>
+            <p id="log-err">⚠ Invalid credentials. Please try again.</p>
+            <button class="login-btn" onclick="checkLogin()">LOGIN TO SYSTEM</button>
+        </div>
+        <div class="login-foot">AUTHORIZED PERSONNEL ONLY</div>
+    </div>
+</div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+    <div class="sidebar-header">
+        <div class="sidebar-icon">📦</div>
+        <div><span class="brand">TLGP WMS</span><span class="ver">PRO v2.0</span></div>
+    </div>
+    <div class="sb-sec">
+        <span class="sb-lbl">NAVIGATION</span>
+        <a class="nav-btn" href="index.html">📦 &nbsp;INVENTORY LIST</a>
+        <a class="nav-btn" href="transfer.html">🚚 &nbsp;TRANSFER IN</a>
+        <a class="nav-btn" href="storingtag.html">🏷 &nbsp;STORING TAG</a>
+        <a class="nav-btn active" href="history.html">📜 &nbsp;SYSTEM LOGS</a>
+        <a class="nav-btn" href="pullout.html">📤 &nbsp;PULL-OUT SLIP</a>
+    </div>
+    <div class="sb-bot">
+        <button class="btn-danger" onclick="mr()">⚠ MASTER RESET</button>
+    </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+    <div class="page-content">
+
+        <div class="page-header">
+            <div class="ph-left">
+                <h2>📜 SYSTEM LOGS</h2>
+                <span id="log-count" class="log-summary-badge">Loading...</span>
+            </div>
+            <div class="ph-right">
+                <span style="font-size:10px;color:#3a4a60;font-style:italic;">Select a date → then click DR/Invoice or POS Control No. to view items</span>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="log-filter-area">
+            <div class="lfg">
+                <label>Type</label>
+                <select id="log-type-filter" onchange="renderTimeline()">
+                    <option value="all">ALL TYPES</option>
+                    <option value="inc">TRANSFER IN</option>
+                    <option value="pull">PULL-OUTS</option>
+                    <option value="upd">UPDATES</option>
+                </select>
+            </div>
+            <div class="lfg"><label>Location</label><input type="text" id="log-loc-filter" placeholder="e.g. TRA0101" oninput="if(activeDR)renderTimeline()"></div>
+            <div class="lfg"><label>Item Code</label><input type="text" id="log-cod-filter" placeholder="e.g. ITEM123" oninput="if(activeDR)renderTimeline()"></div>
+            <div class="lfg"><label>Lot Number</label><input type="text" id="log-lot-filter" placeholder="e.g. LOT001" oninput="if(activeDR)renderTimeline()"></div>
+            <div class="lfg"><label>Quantity</label><input type="text" id="log-qty-filter" placeholder="e.g. 500" oninput="if(activeDR)renderTimeline()"></div>
+        </div>
+
+        <!-- Timeline Layout -->
+        <div class="timeline-layout">
+            <div class="date-sidebar">
+                <div class="date-sidebar-header">DATES</div>
+                <div id="date-list" class="date-list"></div>
+            </div>
+            <div class="detail-panel" id="log-detail">
+                <div class="no-logs">Select a date to view records.</div>
+            </div>
+        </div>
+
+    </div>
+</main>
+
+<script src="script.js"></script>
+<script>
+['log-email','log-pass'].forEach(id=>{
+    document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')checkLogin();});
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TLGP WMS — Pull-Out Slip</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+    <style>
+    /* ── PRINT AREA ─────────────────────────── */
+    @media print {
+        body > * { display: none !important; }
+        #po-print-area { display: block !important; }
+        .print-close-po { display: none !important; }
+    }
+    #po-print-area {
+        display: none;
+        position: fixed; inset: 0; z-index: 99999;
+        background: #fff; overflow: auto; padding: 0;
+    }
+    @page { size: A4 portrait; margin: 8mm 10mm; }
+    .po-slip-page {
+        width: 190mm; min-height: 0; margin: 0 auto;
+        background: #fff; font-family: Arial, Helvetica, sans-serif;
+        font-size: 8.5pt; color: #000; padding: 0; box-sizing: border-box;
+    }
+    .po-slip-title { text-align: center; font-size: 17pt; font-weight: 900; letter-spacing: 4px; margin-bottom: 2mm; border-bottom: 2.5px solid #222; padding-bottom: 2mm; }
+    .po-slip-company { text-align: center; font-size: 8.5pt; margin-bottom: 2mm; }
+    .po-slip-meta { display: flex; justify-content: space-between; margin-bottom: 2.5mm; align-items: flex-start; }
+    .po-slip-meta-left p { margin: 0 0 1mm 0; font-size: 8.5pt; font-weight: 600; }
+    .po-ctrl-label { font-size: 7.5pt; color: #555; margin-bottom: 1px; }
+    .po-ctrl-no { font-size: 11pt; font-weight: 900; font-family: 'Courier New', monospace; border: 2px solid #111; padding: 2px 8px; display: inline-block; letter-spacing: 1px; }
+    .po-slip-table { width: 100%; border-collapse: collapse; margin-top: 1.5mm; }
+    .po-slip-table th { background: #d0d0d0; border: 1.5px solid #444; padding: 3px 3px; font-size: 6.5pt; font-weight: 700; text-align: center; vertical-align: middle; }
+    .po-slip-table td { border: 1px solid #bbb; padding: 2px 3px; font-size: 7.5pt; text-align: center; vertical-align: middle; }
+    .po-slip-table td.l { text-align: left; }
+    .po-slip-table td.r { text-align: right; }
+    .po-slip-table tr.total-row td { font-weight: 900; background: #e8e8e8; border-top: 2px solid #333; }
+    .po-slip-table tr.data-row:nth-child(even) td { background: #f8f8f8; }
+    .po-slip-note { font-size: 7pt; color: #555; margin-top: 2mm; font-style: italic; }
+    .po-slip-sigs { display: flex; justify-content: space-between; margin-top: 8mm; gap: 8mm; }
+    .po-slip-sig { flex: 1; text-align: center; border-top: 1.5px solid #333; padding-top: 3px; font-size: 8pt; font-weight: 700; }
+    .po-slip-footer { text-align: right; margin-top: 3mm; font-size: 7pt; color: #888; font-style: italic; }
+    .print-close-po { position: fixed; top: 12px; right: 16px; z-index: 999999; background: #f05454; color: #fff; border: none; border-radius: 6px; padding: 10px 18px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; }
+
+    /* ── PULL-OUT PAGE STYLES ──────────────────── */
+    .po-slip-card {
+        background: #fff;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.07);
+        overflow: hidden;
+        flex-shrink: 0;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    }
+    .po-slip-banner {
+        background: linear-gradient(135deg, #1a0a0a 0%, #2d1010 60%, #1a0a0a 100%);
+        padding: 12px 18px 10px;
+        display: flex; align-items: center; justify-content: space-between;
+        border-bottom: 2px solid rgba(240,84,84,0.25);
+    }
+    .po-banner-left { display: flex; flex-direction: column; gap: 1px; }
+    .po-company { font-size: 9px; color: rgba(255,255,255,0.35); letter-spacing: 0.16em; text-transform: uppercase; font-weight: 600; }
+    .po-slip-big-title { font-size: 20px; font-weight: 900; color: #ffe8e8; letter-spacing: 0.22em; text-transform: uppercase; text-shadow: 0 2px 10px rgba(240,84,84,0.3); }
+    .po-banner-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+    .po-ctrl-lbl { font-size: 8px; font-weight: 700; color: rgba(255,255,255,0.3); letter-spacing: 0.16em; }
+    .po-ctrl-no-input {
+        background: rgba(255,255,255,0.07); border: 1.5px solid rgba(240,84,84,0.5);
+        border-radius: 5px; color: #ff9090; font-size: 13px; font-weight: 800;
+        font-family: 'JetBrains Mono', monospace; padding: 5px 10px; outline: none;
+        text-align: center; letter-spacing: 0.08em; width: 200px; transition: 0.15s;
+    }
+    .po-ctrl-no-input:focus { border-color: #f05454; background: rgba(240,84,84,0.1); }
+    .po-ctrl-no-input::placeholder { color: rgba(255,255,255,0.18); font-size: 10px; }
+
+    .po-slip-fields {
+        display: flex; gap: 0; padding: 0; background: rgba(0,0,0,0.15);
+    }
+    .po-field-group {
+        display: flex; flex-direction: column; gap: 3px;
+        padding: 9px 14px; border-right: 1px solid rgba(255,255,255,0.05); flex: 1;
+    }
+    .po-field-group:last-child { border-right: none; }
+    .po-field-lbl { font-size: 8px; font-weight: 700; color: #2a3d56; letter-spacing: 0.14em; text-transform: uppercase; }
+    .po-field-static { font-size: 13px; font-weight: 800; color: #374151; letter-spacing: 0.04em; }
+    .po-field-inp {
+        background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 4px; color: #374151; font-size: 11px; font-weight: 600;
+        padding: 5px 7px; outline: none; transition: 0.15s; font-family: inherit; width: 100%;
+    }
+    .po-field-inp:focus { border-color: #f05454; background: rgba(240,84,84,0.07); }
+    .po-field-inp option { background: #fff; }
+
+    /* ── PENDING SLIP TABLE ─────────────────── */
+    .po-pending-section {
+        background: #fff; border-radius: 9px; border: 1px solid #e2e8f0;
+        display: flex; flex-direction: column; flex-grow: 1; overflow: hidden;
+        border-top: 2px solid rgba(240,84,84,0.4);
+    }
+    .po-pending-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 10px 14px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; flex-shrink: 0;
+    }
+    .po-pending-title { font-size: 11px; font-weight: 800; color: #1e293b; letter-spacing: 0.1em; display: flex; align-items: center; gap: 8px; }
+    .po-pending-dot { width: 7px; height: 7px; background: #f05454; border-radius: 50%; animation: pd 2s infinite; box-shadow: 0 0 5px #f05454; }
+    .po-pending-actions { display: flex; gap: 6px; align-items: center; }
+
+    .po-table-wrap { overflow: auto; flex-grow: 1; }
+    .po-table-wrap table { width: 100%; min-width: 900px; border-collapse: collapse; table-layout: fixed; }
+
+    /* ── STATUS BADGES (APPROVAL) ──────────────── */
+    .status-pending  { background: rgba(251,191,36,0.12); color: #fbbf24; border: 1px solid rgba(251,191,36,0.28); }
+    .status-approved { background: rgba(52,211,153,0.12); color: #34d399; border: 1px solid rgba(52,211,153,0.28); }
+    .status-rejected { background: rgba(240,84,84,0.12); color: #f05454; border: 1px solid rgba(240,84,84,0.28); }
+
+    /* ── ITEM SELECTOR MODAL ──────────────────── */
+    .modal-overlay { position: fixed; inset: 0; z-index: 1100; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.72); backdrop-filter: blur(4px); }
+    .modal-box { background: #fff; border-radius: 13px; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 30px 80px rgba(0,0,0,0.6); display: flex; flex-direction: column; max-height: 90vh; }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid rgba(255,255,255,0.07); flex-shrink: 0; }
+    .modal-header span { font-size: 14px; font-weight: 800; color: #1e293b; letter-spacing: 0.06em; }
+    .modal-close { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: #6a7a8f; font-size: 13px; font-weight: 700; padding: 4px 10px; cursor: pointer; transition: 0.15s; font-family: inherit; }
+    .modal-close:hover { background: #f05454; color: #fff; border-color: #f05454; }
+
+    .add-item-modal { width: 680px; }
+    .add-item-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+
+    .ai-search-bar { display: flex; gap: 8px; align-items: flex-end; }
+    .ai-search-bar .fg { flex: 1; }
+    .ai-search-btn { padding: 6px 14px; background: rgba(240,84,84,0.1); border: 1px solid rgba(240,84,84,0.3); border-radius: 6px; color: #f05454; font-size: 11px; font-weight: 700; cursor: pointer; transition: 0.15s; font-family: inherit; white-space: nowrap; align-self: flex-end; }
+    .ai-search-btn:hover { background: #f05454; color: #fff; }
+
+    .ai-results { max-height: 280px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.06); border-radius: 7px; }
+    .ai-result-row { display: grid; grid-template-columns: 1fr 1.2fr 1fr 70px 80px 100px; gap: 6px; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); align-items: center; cursor: pointer; transition: 0.13s; }
+    .ai-result-row:hover { background: rgba(240,84,84,0.06); }
+    .ai-result-row:last-child { border-bottom: none; }
+    .ai-result-row.header-row { background: #f8fafc; cursor: default; pointer-events: none; }
+    .ai-result-row.header-row span { font-size: 8px; font-weight: 700; color: #3a4a62; letter-spacing: 0.12em; text-transform: uppercase; font-family: 'JetBrains Mono', monospace; }
+    .ai-result-row span { font-size: 11px; color: #7a8a9f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ai-result-row .loc-cell { color: #f07070 !important; font-weight: 700 !important; font-family: 'JetBrains Mono', monospace !important; font-size: 11px !important; }
+    .ai-result-row b { color: #374151; }
+    .ai-result-row:hover b { color: #fff; }
+
+    .add-qty-form { background: rgba(255,255,255,0.02); border-radius: 8px; padding: 12px 14px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 10px; }
+    .add-qty-form .selected-item-info { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .add-qty-form .info-chip { display: flex; flex-direction: column; gap: 2px; }
+    .add-qty-form .info-chip-lbl { font-size: 8px; font-weight: 700; color: #94a3b8; letter-spacing: 0.14em; text-transform: uppercase; }
+    .add-qty-form .info-chip-val { font-size: 12px; color: #374151; font-weight: 600; }
+    .add-qty-inputs { display: grid; grid-template-columns: 1fr 2fr auto; gap: 8px; align-items: flex-end; }
+    .btn-add-item { padding: 8px 16px; background: linear-gradient(135deg,#f05454,#b82020); border: none; border-radius: 6px; color: #fff; font-size: 12px; font-weight: 800; cursor: pointer; transition: 0.15s; font-family: inherit; white-space: nowrap; }
+    .btn-add-item:hover { box-shadow: 0 4px 16px rgba(240,84,84,0.4); transform: translateY(-1px); }
+    .no-selection-msg { text-align: center; color: #2a3a50; font-size: 11px; font-style: italic; padding: 16px; }
+
+    /* ── APPROVAL MODAL ──────────────────────── */
+    .approve-modal { width: 480px; }
+    .approve-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+    .approve-warning { background: rgba(240,84,84,0.08); border: 1px solid rgba(240,84,84,0.25); border-radius: 8px; padding: 14px; }
+    .approve-warning h3 { font-size: 13px; font-weight: 800; color: #f05454; margin-bottom: 6px; letter-spacing: 0.05em; }
+    .approve-warning p { font-size: 11px; color: #8a9ab8; line-height: 1.6; }
+    .approve-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .approve-sum-item { background: rgba(255,255,255,0.03); border-radius: 6px; padding: 10px 12px; border: 1px solid #e2e8f0; }
+    .approve-sum-lbl { font-size: 9px; font-weight: 700; color: #94a3b8; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 3px; }
+    .approve-sum-val { font-size: 16px; font-weight: 800; color: #f05454; font-family: 'JetBrains Mono', monospace; }
+    .approve-pass-row { display: flex; flex-direction: column; gap: 5px; }
+    .approve-pass-row label { font-size: 9px; font-weight: 700; color: #94a3b8; letter-spacing: 0.12em; text-transform: uppercase; }
+    .approve-pass-row input { background: rgba(255,255,255,0.04); border: 1.5px solid rgba(255,255,255,0.08); border-radius: 6px; color: #374151; font-size: 13px; padding: 9px 12px; outline: none; transition: 0.15s; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.12em; }
+    .approve-pass-row input:focus { border-color: #f05454; background: rgba(240,84,84,0.07); }
+    .approve-btns { display: flex; gap: 8px; }
+    .btn-approve-commit { flex: 1; padding: 11px; background: linear-gradient(135deg,#f05454,#b82020); border: none; border-radius: 7px; color: #fff; font-size: 13px; font-weight: 800; letter-spacing: 0.06em; cursor: pointer; transition: 0.18s; font-family: inherit; }
+    .btn-approve-commit:hover { box-shadow: 0 5px 18px rgba(240,84,84,0.42); transform: translateY(-1px); }
+    .btn-approve-cancel { padding: 11px 18px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 7px; color: #6a7a8f; font-size: 13px; font-weight: 700; cursor: pointer; transition: 0.15s; font-family: inherit; }
+    .btn-approve-cancel:hover { background: rgba(255,255,255,0.09); color: #1e293b; }
+
+    /* ── ACTION BUTTON ORANGE ──────────────────── */
+    .btn-orange { background: rgba(240,84,84,0.1); color: #f05454; border-color: rgba(240,84,84,0.22); }
+    .btn-orange:hover { background: #f05454; color: #fff; }
+
+    /* ── SLIP ROW STATUS ─────────────────────── */
+    .slip-approved-row td { opacity: 0.5; }
+    .slip-committed-row td:not(:last-child) { text-decoration: line-through; opacity: 0.45; }
+
+    /* ── EMPTY STATE ─────────────────────────── */
+    .po-empty-state { flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px; color: #2a3a50; }
+    .po-empty-icon { font-size: 48px; opacity: 0.25; }
+    .po-empty-text { font-size: 13px; font-style: italic; }
+
+    /* ── TOTAL BAR ────────────────────────────── */
+    .po-total-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: #f8fafc; border-top: 1px solid rgba(255,255,255,0.05); flex-shrink: 0; }
+    .po-total-info { display: flex; gap: 20px; align-items: center; }
+    .po-total-chip { font-size: 10px; color: #94a3b8; }
+    .po-total-chip b { color: #f05454; font-family: 'JetBrains Mono', monospace; }
+    </style>
+</head>
+<body>
+
+<div id="po-print-area"></div>
+<button class="print-close-po" id="print-close-po" style="display:none;" onclick="closePOPrint()">✕ CLOSE PRINT</button>
+
+<!-- LOGIN -->
+<div id="login-overlay">
+    <div class="login-card">
+        <div class="login-top"><span class="icon">📦</span><h1>TLGP WMS</h1><p>WAREHOUSE MANAGEMENT SYSTEM</p></div>
+        <div class="login-body">
+            <div class="lf"><label>Email Address</label><input type="email" id="log-email" placeholder="user@company.com" autocomplete="off"></div>
+            <div class="lf"><label>Password</label><input type="password" id="log-pass" placeholder="••••••••"></div>
+            <p id="log-err">⚠ Invalid credentials. Please try again.</p>
+            <button class="login-btn" onclick="checkLogin()">LOGIN TO SYSTEM</button>
+        </div>
+        <div class="login-foot">AUTHORIZED PERSONNEL ONLY</div>
+    </div>
+</div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+    <div class="sidebar-header">
+        <div class="sidebar-icon">📦</div>
+        <div><span class="brand">TLGP WMS</span><span class="ver">PRO v2.0</span></div>
+    </div>
+    <div class="sb-sec">
+        <span class="sb-lbl">NAVIGATION</span>
+        <a class="nav-btn" href="index.html">📦 &nbsp;INVENTORY LIST</a>
+        <a class="nav-btn" href="transfer.html">🚚 &nbsp;TRANSFER IN</a>
+        <a class="nav-btn active" href="pullout.html">📤 &nbsp;PULL-OUT SLIP</a>
+        <a class="nav-btn" href="storingtag.html">🏷 &nbsp;STORING TAG</a>
+        <a class="nav-btn" href="history.html">📜 &nbsp;SYSTEM LOGS</a>
+    </div>
+    <div class="sb-bot">
+        <button class="btn-danger" onclick="mr()">⚠ MASTER RESET</button>
+    </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+<div class="page-content">
+
+    <!-- ══ PULL-OUT SLIP HEADER ══ -->
+    <div class="po-slip-card">
+        <div class="po-slip-banner">
+            <div class="po-banner-left">
+                <div class="po-company">Toshiba Logistics Phils. Corp.</div>
+                <div class="po-slip-big-title">PULL-OUT SLIP</div>
+            </div>
+            <div class="po-banner-right">
+                <div class="po-ctrl-lbl">POS CONTROL NO.</div>
+                <input type="text" id="slip-posno" class="po-ctrl-no-input" placeholder="POS2602-XXX">
+            </div>
+        </div>
+        <div class="po-slip-fields">
+            <div class="po-field-group">
+                <span class="po-field-lbl">FROM</span>
+                <span class="po-field-static">TLGP</span>
+            </div>
+            <div class="po-field-group">
+                <span class="po-field-lbl">TO</span>
+                <span class="po-field-static">TPC</span>
+            </div>
+            <div class="po-field-group">
+                <span class="po-field-lbl">DATE</span>
+                <input type="date" id="slip-date" class="po-field-inp">
+            </div>
+            <div class="po-field-group">
+                <span class="po-field-lbl">REQUESTED BY</span>
+                <input type="text" id="slip-reqby" class="po-field-inp" placeholder="Name / Department">
+            </div>
+            <div class="po-field-group">
+                <span class="po-field-lbl">PURPOSE / REMARKS</span>
+                <input type="text" id="slip-purpose" class="po-field-inp" placeholder="e.g. Production Request">
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ TOOLBAR ══ -->
+    <div class="page-header" style="padding:8px 14px;gap:8px;">
+        <div class="ph-left">
+            <h2>📤 PULL-OUT SLIP</h2>
+            <span class="log-summary-badge" id="slip-badge">0 items</span>
+        </div>
+        <div class="ph-right" style="flex-wrap:wrap;gap:6px;">
+            <button class="btn-xls-action" onclick="openAddItem()">+ ADD ITEM</button>
+            <button class="btn-xls-action" onclick="clearSlip()">✕ CLEAR ALL</button>
+            <button class="btn-print-slip" onclick="printPOSlip()">🖨 PRINT SLIP</button>
+            <button class="btn-xls-commit" onclick="openApproval()">✅ APPROVE & COMMIT</button>
+        </div>
+    </div>
+
+    <!-- ══ PENDING SLIP TABLE ══ -->
+    <div class="po-pending-section">
+        <div class="po-pending-header">
+            <div class="po-pending-title">
+                <span class="po-pending-dot"></span>
+                ITEMS PENDING PULL-OUT
+            </div>
+            <div style="font-size:10px;color:#94a3b8;font-style:italic;">Items listed here are staged — not yet deducted from inventory</div>
+        </div>
+
+        <div id="po-empty-state" class="po-empty-state">
+            <div class="po-empty-icon">📋</div>
+            <div class="po-empty-text">No items added yet. Click <b>+ ADD ITEM</b> to begin.</div>
+        </div>
+
+        <div class="po-table-wrap" id="po-table-wrap" style="display:none;">
+            <table>
+                <thead>
+                    <tr class="thead-main">
+                        <th width="36">NO.</th>
+                        <th width="82">LOCATION</th>
+                        <th width="155">ITEM CODE</th>
+                        <th width="105">LOT #</th>
+                        <th width="90">STATUS</th>
+                        <th width="80">PULL QTY</th>
+                        <th width="85">AVAIL QTY</th>
+                        <th width="90">PALLET REF</th>
+                        <th width="100">NO. OF CASES</th>
+                        <th width="110">REMARKS</th>
+                        <th width="82">TLGP LOCATION</th>
+                        <th width="80">ACTION</th>
+                    </tr>
+                </thead>
+                <tbody id="po-slip-body"></tbody>
+            </table>
+        </div>
+
+        <div class="po-total-bar" id="po-total-bar" style="display:none;">
+            <div class="po-total-info">
+                <div class="po-total-chip">ITEMS: <b id="total-items">0</b></div>
+                <div class="po-total-chip">TOTAL QTY: <b id="total-qty">0</b></div>
+            </div>
+            <div style="font-size:10px;color:#2a3a50;font-style:italic;">Press <b style="color:#34d399;">APPROVE &amp; COMMIT</b> to deduct from inventory</div>
+        </div>
+    </div>
+
+</div>
+</main>
+
+<!-- ══ ADD ITEM MODAL ══ -->
+<div id="add-item-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeAddItem()">
+    <div class="modal-box add-item-modal">
+        <div class="modal-header">
+            <span>📦 SELECT ITEM TO PULL OUT</span>
+            <button class="modal-close" onclick="closeAddItem()">✕</button>
+        </div>
+        <div class="add-item-body">
+
+            <!-- Search -->
+            <div class="ai-search-bar">
+                <div class="fg"><label>Search by Location</label><input type="text" id="ai-loc" placeholder="e.g. TRA0101" oninput="filterResults()"></div>
+                <div class="fg"><label>Search by Item Code</label><input type="text" id="ai-cod" placeholder="e.g. SSBW010NWS" oninput="filterResults()"></div>
+                <div class="fg"><label>Search by Lot No.</label><input type="text" id="ai-lot" placeholder="e.g. 2597911" oninput="filterResults()"></div>
+            </div>
+
+            <!-- Results list -->
+            <div class="ai-results">
+                <div class="ai-result-row header-row">
+                    <span>LOCATION</span><span>ITEM CODE</span><span>LOT #</span><span>QTY</span><span>STATUS</span><span>TYPE</span>
+                </div>
+                <div id="ai-result-list"></div>
+            </div>
+
+            <!-- Add form -->
+            <div class="add-qty-form">
+                <div id="no-selection-msg" class="no-selection-msg">← Select an item above to set pull-out quantity</div>
+                <div id="add-qty-fields" style="display:none;">
+                    <div class="selected-item-info" id="selected-item-info"></div>
+                    <div class="add-qty-inputs" style="margin-top:10px;">
+                        <div class="fg"><label>QTY TO PULL OUT</label><input type="number" id="ai-qty" min="1" placeholder="0" style="font-weight:800;color:#f05454;font-family:monospace;font-size:14px;"></div>
+                        <div class="fg"><label>PALLET REFERENCE</label><input type="text" id="ai-pal" placeholder="e.g. N/A"></div>
+                        <button class="btn-add-item" onclick="addItemToSlip()">+ ADD TO SLIP</button>
+                    </div>
+                    <div class="add-qty-inputs" style="margin-top:6px;">
+                        <div class="fg"><label>NO. OF CASES</label><input type="text" id="ai-noc" placeholder="N/A (for finished product)"></div>
+                        <div class="fg"><label>REMARKS</label><input type="text" id="ai-rem" placeholder="e.g. SSS26020531"></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- ══ APPROVAL MODAL ══ -->
+<div id="approve-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeApproval()">
+    <div class="modal-box approve-modal">
+        <div class="modal-header">
+            <span>🔐 APPROVE PULL-OUT</span>
+            <button class="modal-close" onclick="closeApproval()">✕</button>
+        </div>
+        <div class="approve-body">
+            <div class="approve-warning">
+                <h3>⚠ CONFIRMATION REQUIRED</h3>
+                <p>Approving this pull-out will permanently deduct the listed quantities from inventory. This action will be logged in the system.</p>
+            </div>
+
+            <div class="approve-summary">
+                <div class="approve-sum-item">
+                    <div class="approve-sum-lbl">Items to Pull Out</div>
+                    <div class="approve-sum-val" id="apv-items">0</div>
+                </div>
+                <div class="approve-sum-item">
+                    <div class="approve-sum-lbl">Total Quantity</div>
+                    <div class="approve-sum-val" id="apv-qty">0</div>
+                </div>
+                <div class="approve-sum-item">
+                    <div class="approve-sum-lbl">POS Control No.</div>
+                    <div class="approve-sum-val" id="apv-posno" style="font-size:12px;">—</div>
+                </div>
+                <div class="approve-sum-item">
+                    <div class="approve-sum-lbl">Date</div>
+                    <div class="approve-sum-val" id="apv-date" style="font-size:12px;">—</div>
+                </div>
+            </div>
+
+            <div class="approve-pass-row">
+                <label>MASTER PASSWORD TO APPROVE</label>
+                <input type="password" id="approve-pass" placeholder="Enter password to authorize">
+            </div>
+
+            <div class="approve-btns">
+                <button class="btn-approve-cancel" onclick="closeApproval()">CANCEL</button>
+                <button class="btn-approve-commit" onclick="commitApproval()">⚡ APPROVE & COMMIT</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div id="copy-toast" class="copy-toast"></div>
+
+<script src="script.js"></script>
+<script>
+['log-email','log-pass'].forEach(id=>{
+    document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')checkLogin();});
+});
+
+// ── PULL-OUT SLIP STATE ─────────────────────
+let slipRows = []; // { idx, loc, cod, lot, sts, pullQty, maxQty, pal, noc, remarks, dat, typ, acc, dr }
+let selectedDbItem = null; // currently selected item from search
+
+// ── RENDER SLIP TABLE ───────────────────────
+function renderSlip() {
+    const wrap = document.getElementById('po-table-wrap');
+    const empty = document.getElementById('po-empty-state');
+    const totalBar = document.getElementById('po-total-bar');
+    const badge = document.getElementById('slip-badge');
+
+    if (!slipRows.length) {
+        wrap.style.display = 'none';
+        empty.style.display = 'flex';
+        totalBar.style.display = 'none';
+        badge.textContent = '0 items';
+        return;
+    }
+
+    wrap.style.display = 'block';
+    empty.style.display = 'none';
+    totalBar.style.display = 'flex';
+
+    const totalItems = slipRows.length;
+    const totalQty = slipRows.reduce((s, r) => s + r.pullQty, 0);
+    badge.textContent = `${totalItems} item${totalItems !== 1 ? 's' : ''}`;
+    document.getElementById('total-items').textContent = totalItems;
+    document.getElementById('total-qty').textContent = totalQty.toLocaleString();
+
+    const body = document.getElementById('po-slip-body');
+    body.innerHTML = slipRows.map((r, i) => `
+        <tr>
+            <td>${i + 1}</td>
+            <td class="loc-cell">${r.loc}</td>
+            <td><b>${r.cod}</b></td>
+            <td>${r.lot || '—'}</td>
+            <td><span class="bdg status-${(r.sts || '').replace(/\s/g, '')}">${r.sts || '—'}</span></td>
+            <td class="qty-normal">${r.pullQty.toLocaleString()}</td>
+            <td style="color:#94a3b8;">${r.maxQty.toLocaleString()}</td>
+            <td>${r.pal || 'N/A'}</td>
+            <td>${r.noc || 'N/A'}</td>
+            <td>${r.remarks || '—'}</td>
+            <td class="loc-cell">${r.loc}</td>
+            <td><button class="btn btn-red" onclick="removeSlipRow(${i})">✕ DEL</button></td>
+        </tr>
+    `).join('');
+}
+
+function removeSlipRow(i) {
+    slipRows.splice(i, 1);
+    renderSlip();
+}
+
+function clearSlip() {
+    if (slipRows.length && !confirm('Clear all items from pull-out slip?')) return;
+    slipRows = [];
+    renderSlip();
+}
+
+// ── ADD ITEM MODAL ──────────────────────────
+function openAddItem() {
+    document.getElementById('add-item-modal').style.display = 'flex';
+    filterResults();
+    document.getElementById('ai-loc').focus();
+}
+
+function closeAddItem() {
+    document.getElementById('add-item-modal').style.display = 'none';
+    selectedDbItem = null;
+    document.getElementById('add-qty-fields').style.display = 'none';
+    document.getElementById('no-selection-msg').style.display = 'block';
+    ['ai-loc','ai-cod','ai-lot','ai-qty','ai-pal','ai-noc','ai-rem'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+}
+
+function filterResults() {
+    const loc = (document.getElementById('ai-loc').value || '').toLowerCase();
+    const cod = (document.getElementById('ai-cod').value || '').toLowerCase();
+    const lot = (document.getElementById('ai-lot').value || '').toLowerCase();
+
+    const list = document.getElementById('ai-result-list');
+    const active = db.filter(x => parseNum(x.qty) > 0);
+
+    let filtered = active.filter(x =>
+        (!loc || (x.loc || '').toLowerCase().includes(loc)) &&
+        (!cod || (x.cod || '').toLowerCase().includes(cod)) &&
+        (!lot || (x.lot || '').toLowerCase().includes(lot))
+    );
+
+    if (!filtered.length) {
+        list.innerHTML = '<div style="padding:20px;text-align:center;color:#2a3a50;font-style:italic;font-size:11px;">No matching items found.</div>';
+        return;
+    }
+
+    // Limit display to 80 rows
+    const display = filtered.slice(0, 80);
+    list.innerHTML = display.map(x => {
+        const idx = db.indexOf(x);
+        return `<div class="ai-result-row" onclick="selectItem(${idx})">
+            <span class="loc-cell">${x.loc}</span>
+            <span><b>${x.cod}</b></span>
+            <span>${x.lot || '—'}</span>
+            <span class="qty-normal" style="font-family:monospace;">${parseNum(x.qty).toLocaleString()}</span>
+            <span><span class="bdg status-${(x.sts || '').replace(/\s/g, '')}">${x.sts || '—'}</span></span>
+            <span>${x.typ || '—'}</span>
+        </div>`;
+    }).join('');
+
+    if (filtered.length > 80) {
+        list.innerHTML += `<div style="padding:8px 12px;text-align:center;color:#94a3b8;font-size:10px;font-style:italic;">Showing 80 of ${filtered.length} results. Refine search.</div>`;
+    }
+}
+
+function selectItem(idx) {
+    const x = db[idx];
+    if (!x) return;
+    selectedDbItem = { idx, item: x };
+    const maxQ = parseNum(x.qty);
+
+    document.getElementById('no-selection-msg').style.display = 'none';
+    document.getElementById('add-qty-fields').style.display = 'block';
+    document.getElementById('selected-item-info').innerHTML = `
+        <div class="info-chip"><div class="info-chip-lbl">LOCATION</div><div class="info-chip-val loc-cell" style="color:#f07070;font-family:monospace;">${x.loc}</div></div>
+        <div class="info-chip"><div class="info-chip-lbl">ITEM CODE</div><div class="info-chip-val"><b>${x.cod}</b></div></div>
+        <div class="info-chip"><div class="info-chip-lbl">LOT NO.</div><div class="info-chip-val">${x.lot || '—'}</div></div>
+        <div class="info-chip"><div class="info-chip-lbl">AVAILABLE QTY</div><div class="info-chip-val qty-normal">${maxQ.toLocaleString()}</div></div>
+    `;
+    const qtyInp = document.getElementById('ai-qty');
+    qtyInp.max = maxQ;
+    qtyInp.value = maxQ;
+    qtyInp.focus();
+    qtyInp.select();
+
+    // Pre-fill pallet
+    document.getElementById('ai-pal').value = x.pal || 'N/A';
+}
+
+function addItemToSlip() {
+    if (!selectedDbItem) return;
+    const { idx, item } = selectedDbItem;
+    const qty = parseNum(document.getElementById('ai-qty').value);
+    const maxQ = parseNum(item.qty);
+    if (qty <= 0 || qty > maxQ) { alert(`❌ Invalid quantity. Must be between 1 and ${maxQ.toLocaleString()}`); return; }
+
+    // Check if same item already in slip
+    const existing = slipRows.find(r => r.idx === idx);
+    if (existing) {
+        if (!confirm(`⚠️ ${item.loc} is already in the slip. Add again?`)) return;
+    }
+
+    slipRows.push({
+        idx, loc: item.loc, cod: item.cod, lot: item.lot, sts: item.sts,
+        pullQty: qty, maxQty: maxQ,
+        pal: document.getElementById('ai-pal').value || 'N/A',
+        noc: document.getElementById('ai-noc').value || 'N/A',
+        remarks: document.getElementById('ai-rem').value,
+        dat: item.dat, typ: item.typ, acc: item.acc, dr: item.dr
+    });
+
+    renderSlip();
+    // Reset selection
+    selectedDbItem = null;
+    document.getElementById('add-qty-fields').style.display = 'none';
+    document.getElementById('no-selection-msg').style.display = 'block';
+    document.getElementById('ai-qty').value = '';
+    document.getElementById('ai-pal').value = '';
+    document.getElementById('ai-noc').value = '';
+    document.getElementById('ai-rem').value = '';
+
+    showToast(`✅ ${item.cod} added to slip`);
+}
+
+// ── APPROVAL MODAL ──────────────────────────
+function openApproval() {
+    if (!slipRows.length) { alert('❌ No items in pull-out slip.'); return; }
+    const posno = document.getElementById('slip-posno').value.trim();
+    if (!posno) { alert('❌ Please enter a POS Control No. first.'); document.getElementById('slip-posno').focus(); return; }
+
+    document.getElementById('apv-items').textContent = slipRows.length;
+    document.getElementById('apv-qty').textContent = slipRows.reduce((s, r) => s + r.pullQty, 0).toLocaleString();
+    document.getElementById('apv-posno').textContent = posno;
+    document.getElementById('apv-date').textContent = document.getElementById('slip-date').value || '—';
+    document.getElementById('approve-pass').value = '';
+    document.getElementById('approve-modal').style.display = 'flex';
+    setTimeout(() => document.getElementById('approve-pass').focus(), 50);
+}
+
+function closeApproval() {
+    document.getElementById('approve-modal').style.display = 'none';
+}
+
+function commitApproval() {
+    const pass = document.getElementById('approve-pass').value;
+    if (pass !== 'canon') {
+        document.getElementById('approve-pass').style.borderColor = '#f05454';
+        setTimeout(() => document.getElementById('approve-pass').style.borderColor = '', 1200);
+        alert('❌ Incorrect password. Pull-out not approved.');
+        return;
+    }
+
+    const posno = document.getElementById('slip-posno').value.trim();
+
+    // Validate quantities still available in DB
+    for (const r of slipRows) {
+        const current = db[r.idx];
+        if (!current) { alert(`❌ Item at ${r.loc} no longer exists in inventory.`); return; }
+        const maxQ = parseNum(current.qty);
+        if (r.pullQty > maxQ) { alert(`❌ ${r.loc}: Pull qty (${r.pullQty.toLocaleString()}) exceeds available (${maxQ.toLocaleString()})`); return; }
+    }
+
+    undos.push(JSON.stringify(db));
+    logs = ensureLogs(logs);
+
+    slipRows.forEach(r => {
+        const current = db[r.idx];
+        if (!current) return;
+        const rem = parseNum(current.qty) - r.pullQty;
+        logs.pull.unshift({
+            ...current, outQty: r.pullQty, pos: posno, dr: posno,
+            ts: nowStr(), logType: 'PULL-OUT'
+        });
+        if (rem <= 0) { db[r.idx] = null; }
+        else { db[r.idx].qty = rem; db[r.idx].isMod = true; }
+    });
+
+    db = db.filter(x => x !== null);
+    save();
+
+    closeApproval();
+    const committed = slipRows.length;
+    slipRows = [];
+    renderSlip();
+    showToast(`✅ Pull-out approved! ${committed} item(s) deducted from inventory.`);
+}
+
+// ── PRINT PULL-OUT SLIP ─────────────────────
+function printPOSlip() {
+    if (!slipRows.length) { alert('❌ No items to print.'); return; }
+    const posno = document.getElementById('slip-posno').value || '—';
+    const slipDate = document.getElementById('slip-date').value || '—';
+    const reqby = document.getElementById('slip-reqby').value || '—';
+    const purpose = document.getElementById('slip-purpose').value || '';
+
+    let totalQty = 0, totalCases = 0;
+    slipRows.forEach(r => {
+        totalQty += r.pullQty;
+        totalCases += parseFloat(r.noc) || 0;
+    });
+
+    const tbody = slipRows.map((r, i) => `
+        <tr class="data-row">
+            <td>${i + 1}</td>
+            <td class="l"><b>${r.cod}</b></td>
+            <td>${r.lot || '—'}</td>
+            <td>${r.sts || '—'}</td>
+            <td class="r" style="font-weight:600;">${r.pullQty.toLocaleString()}</td>
+            <td>${r.pal || 'N/A'}</td>
+            <td>${r.noc || 'N/A'}</td>
+            <td class="l">${r.remarks || '—'}</td>
+            <td><b>${r.loc}</b></td>
+        </tr>
+    `).join('');
+
+    document.getElementById('po-print-area').innerHTML = `
+        <div class="po-slip-page">
+            <div class="po-slip-company">Toshiba Logistics Phils. Corp.</div>
+            <div class="po-slip-title">PULL OUT SLIP</div>
+            <div class="po-slip-meta">
+                <div class="po-slip-meta-left">
+                    <p>From : &nbsp;<b>TLGP</b></p>
+                    <p>To : &nbsp;&nbsp;&nbsp;<b>TPC</b></p>
+                    <p>Date : &nbsp;<b>${slipDate}</b></p>
+                    <p>Requested By : &nbsp;<b>${reqby}</b></p>
+                    ${purpose ? `<p>Purpose : &nbsp;<b>${purpose}</b></p>` : ''}
+                </div>
+                <div>
+                    <div class="po-ctrl-label">POS Control No:</div>
+                    <div class="po-ctrl-no">${posno}</div>
+                </div>
+            </div>
+            <table class="po-slip-table">
+                <thead>
+                    <tr>
+                        <th style="width:28px">NO.</th>
+                        <th style="width:155px">PRODUCT / ITEM CODE</th>
+                        <th style="width:88px">LOT #</th>
+                        <th style="width:88px">QUALITY STATUS</th>
+                        <th style="width:78px">QUANTITY</th>
+                        <th style="width:88px">PALLET REFERENCE</th>
+                        <th style="width:58px">NO. OF CASES</th>
+                        <th style="width:110px">REMARKS</th>
+                        <th style="width:90px">TLGP LOCATION</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${tbody}
+                    <tr class="total-row">
+                        <td colspan="4" class="r" style="font-weight:900;padding-right:8px;">TOTAL</td>
+                        <td class="r" style="font-weight:900;">${totalQty.toLocaleString()}</td>
+                        <td></td>
+                        <td style="font-weight:900;">${totalCases || ''}</td>
+                        <td colspan="2"></td>
+                    </tr>
+                </tbody>
+            </table>
+            <p class="po-slip-note">NOTE: No. of Cases is applicable for Finished Product only.</p>
+            <div class="po-slip-sigs">
+                <div class="po-slip-sig">PREPARED BY:</div>
+                <div class="po-slip-sig">PICKED BY:</div>
+                <div class="po-slip-sig">CHECKED BY:</div>
+            </div>
+            <div class="po-slip-footer">PLC-TPC-032-R00 &nbsp;|&nbsp; Printed: ${new Date().toLocaleString('en-GB')}</div>
+        </div>`;
+
+    document.getElementById('po-print-area').style.display = 'block';
+    document.getElementById('print-close-po').style.display = 'block';
+    window.print();
+}
+
+function closePOPrint() {
+    document.getElementById('po-print-area').style.display = 'none';
+    document.getElementById('print-close-po').style.display = 'none';
+}
+
+// ── TOAST ───────────────────────────────────
+function showToast(msg) {
+    const toast = document.getElementById('copy-toast');
+    if (!toast) return;
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => toast.classList.remove('show'), 2500);
+}
+
+// ── SET TODAY'S DATE DEFAULT & PREFILL ─────────
+window.addEventListener('load', () => {
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('slip-date').value = today;
+
+    // If redirected from inventory OUT button, open search pre-filled
+    const prefillLoc = sessionStorage.getItem('po_prefill_loc');
+    const prefillCod = sessionStorage.getItem('po_prefill_cod');
+    if (prefillLoc || prefillCod) {
+        sessionStorage.removeItem('po_prefill_loc');
+        sessionStorage.removeItem('po_prefill_cod');
+        // Wait for DB to load then open
+        const waitForDB = setInterval(() => {
+            if (db.length > 0) {
+                clearInterval(waitForDB);
+                openAddItem();
+                if (prefillLoc) document.getElementById('ai-loc').value = prefillLoc;
+                if (prefillCod) document.getElementById('ai-cod').value = prefillCod;
+                filterResults();
+                // Auto-select if single match
+                const active = db.filter(x => parseNum(x.qty) > 0);
+                const match = active.filter(x =>
+                    (!prefillLoc || x.loc === prefillLoc) &&
+                    (!prefillCod || x.cod === prefillCod)
+                );
+                if (match.length === 1) selectItem(db.indexOf(match[0]));
+            }
+        }, 100);
+    }
+});
+
+// ── KEYBOARD SHORTCUTS IN MODAL ──────────────
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+        closeAddItem();
+        closeApproval();
+    }
+    if (e.key === 'Enter' && document.getElementById('approve-modal').style.display === 'flex') {
+        commitApproval();
+    }
+    if (e.key === 'Enter' && document.getElementById('add-qty-fields').style.display === 'block') {
+        const active = document.activeElement;
+        if (active && active.closest('.add-qty-inputs')) addItemToSlip();
+    }
+});
+</script>
+
+<!-- Toast CSS (must be present) -->
+<style>
+.copy-toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+    background: #1e2d42; border: 1px solid rgba(61,142,245,0.3);
+    color: #374151; font-size: 12px; font-weight: 600;
+    padding: 10px 18px; border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    opacity: 0; transform: translateY(10px); transition: 0.22s;
+    pointer-events: none;
+}
+.copy-toast.show { opacity: 1; transform: none; }
+</style>
+</body>
+</html>
